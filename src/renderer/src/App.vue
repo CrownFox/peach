@@ -1,0 +1,280 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import type { RecentProject } from '@shared/recent'
+import { usePlayStore } from '@/stores/play'
+import { useProjectStore } from '@/stores/project'
+import { useSessionStore } from '@/stores/session'
+import AssetBrowser from './components/AssetBrowser.vue'
+import BookEditor from './components/BookEditor.vue'
+import CollectionEditor from './components/CollectionEditor.vue'
+import EditorCanvas from './components/EditorCanvas.vue'
+import GameView from './components/GameView.vue'
+import InspectorPanel from './components/InspectorPanel.vue'
+import MenuEditor from './components/MenuEditor.vue'
+import PageEditor from './components/PageEditor.vue'
+import ScriptEditor from './components/ScriptEditor.vue'
+import Modal from './components/Modal.vue'
+import ProjectTree from './components/ProjectTree.vue'
+import WelcomeScreen from './components/WelcomeScreen.vue'
+
+const project = useProjectStore()
+const session = useSessionStore()
+const play = usePlayStore()
+const creating = ref(false)
+const projectName = ref('Untitled Game')
+const recents = ref<RecentProject[]>([])
+
+const openMenus = computed(() =>
+  project.workspace.openMenuIds.flatMap((id) => {
+    const asset = project.asset(id)
+    return asset?.type === 'menu' ? [asset] : []
+  })
+)
+const openComposites = computed(() =>
+  project.workspace.openCompositeIds.flatMap((id) => {
+    const asset = project.asset(id)
+    return asset?.type === 'composite' ? [asset] : []
+  })
+)
+const openCollections = computed(() =>
+  project.workspace.openCollectionIds.flatMap((id) => {
+    const asset = project.asset(id)
+    return asset?.type === 'collection' ? [asset] : []
+  })
+)
+const openBooks = computed(() =>
+  project.workspace.openBookIds.flatMap((id) => {
+    const asset = project.asset(id)
+    return asset?.type === 'book' ? [asset] : []
+  })
+)
+const openPages = computed(() =>
+  project.workspace.openPageTabs.flatMap((key) => {
+    const slash = key.indexOf('/')
+    const book = project.asset(key.slice(0, slash))
+    if (book?.type !== 'book') return []
+    const pageId = key.slice(slash + 1)
+    for (const chapter of book.chapters) {
+      const page = chapter.pages.find((item) => item.id === pageId)
+      if (page) return [{ key, title: `${book.name}: ${page.name}` }]
+    }
+    return []
+  })
+)
+
+onMounted(async () => {
+  recents.value = await window.peach.listRecentProjects()
+})
+
+async function openProject(): Promise<void> {
+  const dir = await window.peach.chooseDirectory()
+  if (dir) await project.openProject(dir)
+}
+
+async function openRecent(dir: string): Promise<void> {
+  await project.openProject(dir)
+  if (!project.isOpen) recents.value = await window.peach.forgetRecentProject(dir)
+}
+
+async function forgetRecent(dir: string): Promise<void> {
+  recents.value = await window.peach.forgetRecentProject(dir)
+}
+
+async function confirmCreate(): Promise<void> {
+  const parent = await window.peach.chooseDirectory()
+  if (!parent) return
+  await project.createProject(parent, projectName.value)
+  if (project.isOpen) creating.value = false
+}
+
+const activeScript = computed(() => (project.workspace.activeTab.startsWith('script:') ? project.workspace.activeTab.slice(7) : ''))
+
+function tabTitle(id: string): string {
+  return project.asset(id)?.name ?? 'Menu'
+}
+
+function scriptTitle(key: string): string {
+  if (key.startsWith('asset:')) return project.asset(key.slice(6))?.name ?? 'Script'
+  if (key.startsWith('menu:')) {
+    const menu = project.asset(key.slice(5))
+    return menu ? `${menu.name} script` : 'Script'
+  }
+  if (key.startsWith('composite:')) {
+    const asset = project.asset(key.slice(10))
+    return asset ? `${asset.name} script` : 'Script'
+  }
+  if (key.startsWith('doodad:')) return 'Insert script'
+  if (key.startsWith('pagescript:')) return 'Page script'
+  const [, menuId, componentId] = key.split(':')
+  const menu = project.asset(menuId ?? null)
+  const component = menu && (menu.type === 'menu' || menu.type === 'composite') ? menu.components.find((item) => item.id === componentId) : null
+  return component ? `${component.name} script` : 'Script'
+}
+</script>
+
+<template>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">Peach</div>
+      <div v-if="project.meta" class="project-title">{{ project.meta.name }}</div>
+      <div class="top-actions">
+        <button class="btn quiet" type="button" :disabled="project.busy" @click="creating = true">New</button>
+        <button class="btn quiet" type="button" :disabled="project.busy" @click="openProject">Open</button>
+        <button class="btn" type="button" :disabled="!project.isOpen || project.busy" @click="project.exportGame()">Export</button>
+      </div>
+      <div class="spacer"></div>
+      <div v-if="project.isOpen" class="save-state">{{ project.saveState }}</div>
+    </header>
+    <button v-if="session.banner" class="banner" :class="{ error: session.bannerTone === 'error' }" type="button" @click="session.clearBanner()">
+      {{ session.banner }}
+    </button>
+
+    <WelcomeScreen
+      v-if="!project.isOpen"
+      :recents="recents"
+      @new="creating = true"
+      @open="openProject"
+      @open-recent="openRecent"
+      @forget-recent="forgetRecent"
+    />
+    <div v-else class="workspace">
+      <aside class="tree-pane">
+        <div class="pane-label">Project</div>
+        <ProjectTree />
+      </aside>
+      <main class="center-pane">
+        <div class="tab-strip">
+          <button class="tab" :class="{ active: project.workspace.activeTab === 'game' }" type="button" @click="project.setTab('game')">
+            <span>Game</span>
+          </button>
+          <button class="tab" :class="{ active: project.workspace.activeTab === 'editor' }" type="button" @click="project.setTab('editor')">
+            <span>Editor</span>
+          </button>
+          <button
+            v-for="menu in openMenus"
+            :key="menu.id"
+            class="tab"
+            :class="{ active: project.workspace.activeTab === `menu:${menu.id}` }"
+            type="button"
+            @click="project.setTab(`menu:${menu.id}`)"
+          >
+            <span>{{ tabTitle(menu.id) }}</span>
+            <span class="tab-close" @click.stop="project.closeMenu(menu.id)">×</span>
+          </button>
+          <button
+            v-for="item in openComposites"
+            :key="item.id"
+            class="tab"
+            :class="{ active: project.workspace.activeTab === `composite:${item.id}` }"
+            type="button"
+            @click="project.setTab(`composite:${item.id}`)"
+          >
+            <span>{{ tabTitle(item.id) }}</span>
+            <span class="tab-close" @click.stop="project.closeComposite(item.id)">×</span>
+          </button>
+          <button
+            v-for="item in openCollections"
+            :key="item.id"
+            class="tab"
+            :class="{ active: project.workspace.activeTab === `collection:${item.id}` }"
+            type="button"
+            @click="project.setTab(`collection:${item.id}`)"
+          >
+            <span>{{ item.name }}</span>
+            <span class="tab-close" @click.stop="project.closeCollection(item.id)">×</span>
+          </button>
+          <button
+            v-for="item in openBooks"
+            :key="item.id"
+            class="tab"
+            :class="{ active: project.workspace.activeTab === `book:${item.id}` }"
+            type="button"
+            @click="project.setTab(`book:${item.id}`)"
+          >
+            <span>{{ item.name }}</span>
+            <span class="tab-close" @click.stop="project.closeBook(item.id)">×</span>
+          </button>
+          <button
+            v-for="item in openPages"
+            :key="item.key"
+            class="tab"
+            :class="{ active: project.workspace.activeTab === `page:${item.key}` }"
+            type="button"
+            @click="project.setTab(`page:${item.key}`)"
+          >
+            <span>{{ item.title }}</span>
+            <span class="tab-close" @click.stop="project.closePage(item.key)">×</span>
+          </button>
+          <button
+            v-for="key in project.workspace.openScriptTabs"
+            :key="key"
+            class="tab"
+            :class="{ active: project.workspace.activeTab === `script:${key}` }"
+            type="button"
+            @click="project.setTab(`script:${key}`)"
+          >
+            <span>{{ scriptTitle(key) }}</span>
+            <span class="tab-close" @click.stop="project.closeScriptTab(key)">×</span>
+          </button>
+        </div>
+        <div class="tab-body">
+          <GameView v-show="project.workspace.activeTab === 'game'" />
+          <EditorCanvas v-show="project.workspace.activeTab === 'editor'" />
+          <MenuEditor
+            v-for="menu in openMenus"
+            v-show="project.workspace.activeTab === `menu:${menu.id}`"
+            :key="menu.id"
+            :menu-id="menu.id"
+          />
+          <MenuEditor
+            v-for="item in openComposites"
+            v-show="project.workspace.activeTab === `composite:${item.id}`"
+            :key="item.id"
+            :menu-id="item.id"
+          />
+          <CollectionEditor
+            v-for="item in openCollections"
+            v-show="project.workspace.activeTab === `collection:${item.id}`"
+            :key="item.id"
+            :collection-id="item.id"
+          />
+          <BookEditor
+            v-for="item in openBooks"
+            v-show="project.workspace.activeTab === `book:${item.id}`"
+            :key="item.id"
+            :book-id="item.id"
+          />
+          <PageEditor
+            v-for="item in openPages"
+            v-show="project.workspace.activeTab === `page:${item.key}`"
+            :key="item.key"
+            :book-id="item.key.slice(0, item.key.indexOf('/'))"
+            :page-id="item.key.slice(item.key.indexOf('/') + 1)"
+          />
+          <ScriptEditor
+            v-if="project.workspace.openScriptTabs.length > 0"
+            v-show="activeScript"
+            :tab="activeScript || project.workspace.openScriptTabs[0] || ''"
+          />
+        </div>
+      </main>
+      <aside class="inspector-pane">
+        <div class="pane-label">Inspector</div>
+        <InspectorPanel />
+      </aside>
+    </div>
+    <footer v-if="project.isOpen" class="status">
+      <span>{{ project.projectDir }}</span>
+      <span class="spacer"></span>
+      <span>{{ play.currentId ? 'Playing' : 'Game idle' }}</span>
+    </footer>
+
+    <Modal v-if="creating" title="New project" confirm-label="Choose folder" @cancel="creating = false" @confirm="confirmCreate">
+      <label class="field">
+        <span class="field-label">Name</span>
+        <input v-model="projectName" autofocus />
+      </label>
+    </Modal>
+    <AssetBrowser />
+  </div>
+</template>
