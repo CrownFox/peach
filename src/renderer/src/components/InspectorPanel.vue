@@ -9,8 +9,10 @@ import { isCanvas, type ButtonComponent } from '@shared/types'
 import { usePlayStore } from '@/stores/play'
 import { useProjectStore } from '@/stores/project'
 import { useSessionStore } from '@/stores/session'
+import { GAME_PROPERTIES_WINDOW } from '@shared/workspace'
 import AssetSelect from './AssetSelect.vue'
 import ComponentFields from './ComponentFields.vue'
+import ScriptProperties from './ScriptProperties.vue'
 
 const project = useProjectStore()
 const session = useSessionStore()
@@ -376,6 +378,7 @@ function patchButton(recipe: (component: ButtonComponent) => void): void {
           :menu-id="menu.id"
           :component="selected"
         />
+        <ScriptProperties :menu-id="menu.id" :component="selected" />
       </template>
       <p v-else class="tree-hint">Select a component to edit its rectangle, asset, and label.</p>
     </template>
@@ -392,18 +395,17 @@ function patchButton(recipe: (component: ButtonComponent) => void): void {
 
     <template v-else-if="project.workspace.activeTab.startsWith('book:')">
       <p>Book</p>
-      <p class="tree-hint">Chapters hold pages. Page data is a field list shared by every page. A script loads the book with <code>game.loadBook</code> and opens a page with <code>openPage</code>.</p>
-    </template>
-
-    <template v-else-if="project.workspace.activeTab.startsWith('page:')">
-      <p>Page</p>
-      <p class="tree-hint">Format the writing with the toolbar. Images, conditions, evaluates, text fields, and dropdowns sit in the text. Select one to edit it. A page viewer shows this page in the game.</p>
+      <p class="tree-hint">Chapters and pages are listed on the left. Click a page to edit it. Right-click a chapter or page to add, rename, duplicate, or delete. A new page stays in the tree until you click it. Page data is a field list shared by every page. A script loads the book with <code>game.loadBook</code> and opens a page with <code>openPage</code>.</p>
     </template>
 
     <template v-else-if="focused">
       <p>{{ focused.type }} asset</p>
       <p>{{ focused.name }}</p>
       <p class="tree-hint">{{ focused.relativePath }}</p>
+    </template>
+    <template v-else-if="project.focusedWindow?.assetId === GAME_PROPERTIES_WINDOW">
+      <p>Properties</p>
+      <p class="tree-hint">The title, icon, and author are edited in the Properties window.</p>
     </template>
     <p v-else class="tree-hint">Open an image, button, or panel from the project tree.</p>
   </div>

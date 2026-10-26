@@ -69,8 +69,9 @@ function ensureMonaco(): void {
         startColumn: word.startColumn,
         endColumn: word.endColumn
       }
+      const source = hints.suggestProperties ? model.getValue() : ''
       return {
-        suggestions: scriptSuggestions(before, hints).map((item) => toCompletion(item, range))
+        suggestions: scriptSuggestions(before, hints, source).map((item) => toCompletion(item, range))
       }
     }
   })

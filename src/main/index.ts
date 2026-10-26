@@ -5,10 +5,12 @@ import type { Asset, AssetType, ProjectSnapshot, Workspace } from '@shared/types
 import { exportGame } from './exportGame'
 import {
   createAssetFile,
+  clearGameIcon,
   createFolder,
   createProject,
   deleteNode,
   duplicateNode,
+  importGameIcon,
   importImage,
   moveNode,
   readProject,
@@ -170,9 +172,10 @@ ipcMain.handle('project:delete', (_event, projectDir: string, relativePath: stri
 
 ipcMain.handle('project:saveAsset', (_event, projectDir: string, asset: Asset) => saveAsset(projectDir, asset))
 
-ipcMain.handle('project:saveMeta', (_event, projectDir: string, meta: ProjectSnapshot['meta']) =>
-  saveMeta(projectDir, meta)
-)
+ipcMain.handle('project:saveMeta', async (_event, projectDir: string, meta: ProjectSnapshot['meta']) => {
+  await saveMeta(projectDir, meta)
+  await rememberRecentProject({ path: projectDir, name: meta.name })
+})
 
 ipcMain.handle('project:saveWorkspace', (_event, projectDir: string, workspace: Workspace) =>
   saveWorkspace(projectDir, workspace)
@@ -181,6 +184,10 @@ ipcMain.handle('project:saveWorkspace', (_event, projectDir: string, workspace: 
 ipcMain.handle('project:importImage', (_event, projectDir: string, relativePath: string, sourcePath: string) =>
   importImage(projectDir, relativePath, sourcePath)
 )
+
+ipcMain.handle('project:importIcon', (_event, projectDir: string, sourcePath: string) => importGameIcon(projectDir, sourcePath))
+
+ipcMain.handle('project:clearIcon', (_event, projectDir: string) => clearGameIcon(projectDir))
 
 ipcMain.handle('project:export', (_event, projectDir: string, destination: string) =>
   exportGame(projectDir, destination)

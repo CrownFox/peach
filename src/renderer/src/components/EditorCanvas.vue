@@ -2,7 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useCanvasView } from '@/canvasView'
 import { useProjectStore } from '@/stores/project'
+import { GAME_PROPERTIES_WINDOW } from '@shared/workspace'
 import ButtonEditor from './ButtonEditor.vue'
+import GameProperties from './GameProperties.vue'
 import ImageEditor from './ImageEditor.vue'
 import PanelEditor from './PanelEditor.vue'
 
@@ -11,7 +13,7 @@ const edges = ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se']
 const { zoom, panning, onPointerDown, worldStyle, gridStyle, bindWheel } = useCanvasView({ panX: 48, panY: 48 })
 const windows = computed(() =>
   [...project.workspace.windows]
-    .filter((window) => project.asset(window.assetId))
+    .filter((window) => window.assetId === GAME_PROPERTIES_WINDOW || project.asset(window.assetId))
     .sort((left, right) => left.z - right.z)
 )
 
@@ -87,7 +89,7 @@ onBeforeUnmount(() => stopWheel?.())
 
 <template>
   <div ref="canvasEl" class="canvas" :class="{ 'is-panning': panning }" :style="gridStyle" @pointerdown="onPointerDown($event, panBackground)">
-    <div v-if="windows.length === 0" class="canvas-empty">Double-click an image, button, or panel in the tree to edit it here.</div>
+    <div v-if="windows.length === 0" class="canvas-empty">Double-click an image, button, or panel in the tree, or choose Properties under Project.</div>
     <div class="canvas-surface" :style="worldStyle">
       <article
         v-for="win in windows"
@@ -106,11 +108,12 @@ onBeforeUnmount(() => stopWheel?.())
           @pointerdown="onResize($event, win.assetId)"
         ></button>
         <header class="window-title" @pointerdown="onTitleDown($event, win.assetId)">
-          <strong>{{ project.asset(win.assetId)?.name }}</strong>
+          <strong>{{ win.assetId === GAME_PROPERTIES_WINDOW ? 'Properties' : project.asset(win.assetId)?.name }}</strong>
           <button class="btn quiet" type="button" data-close @click="project.closeWindow(win.assetId)">Close</button>
         </header>
         <div class="window-body">
-          <ImageEditor v-if="assetType(win.assetId) === 'image'" :asset-id="win.assetId" />
+          <GameProperties v-if="win.assetId === GAME_PROPERTIES_WINDOW" />
+          <ImageEditor v-else-if="assetType(win.assetId) === 'image'" :asset-id="win.assetId" />
           <ButtonEditor v-else-if="assetType(win.assetId) === 'button'" :asset-id="win.assetId" />
           <PanelEditor v-else-if="assetType(win.assetId) === 'panel'" :asset-id="win.assetId" />
         </div>

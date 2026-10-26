@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { cloneBlocks, coercePageValue, decodeBookPage, emptyPage, encodeBookPage, isAssetPageField, PAGE_VALUE_TYPES, pageFieldType } from '@shared/books'
 import { createId } from '@shared/ids'
 import { uniqueName } from '@shared/paths'
@@ -8,18 +8,56 @@ import type { BookAsset, BookChapter, BookPage, PageField, PageFieldType } from 
 import { useProjectStore } from '@/stores/project'
 import AssetSelect from './AssetSelect.vue'
 import BookPageSelect from './BookPageSelect.vue'
+import Modal from './Modal.vue'
+import PageEditor from './PageEditor.vue'
 
 const props = defineProps<{ bookId: string }>()
 const project = useProjectStore()
-const chapterId = ref<string | null>(null)
+const pageId = ref<string | null>(null)
+const expanded = ref<string[]>([])
 const editing = ref(false)
 const banner = ref('')
+const renameInput = ref<HTMLInputElement | HTMLInputElement[] | null>(null)
+const renaming = ref<{ kind: 'chapter' | 'page'; id: string } | null>(null)
+const menu = ref<{ x: number; y: number; chapterId: string | null; pageId: string | null } | null>(null)
+const deleting = ref<{ kind: 'chapter' | 'page'; id: string; name: string } | null>(null)
+let skipBlur = false
+let committing = false
+let treeReady = false
 
 const book = computed(() => {
   const asset = project.asset(props.bookId)
   return asset?.type === 'book' ? asset : null
 })
-const chapter = computed(() => book.value?.chapters.find((item) => item.id === chapterId.value) ?? book.value?.chapters[0] ?? null)
+watch(
+  book,
+  (value) => {
+    if (!value) return
+    if (!treeReady) {
+      treeReady = true
+      expanded.value = value.chapters.map((chapter) => chapter.id)
+    }
+    const alive = value.chapters.some((chapter) => chapter.pages.some((page) => page.id === pageId.value))
+    if (!alive) pageId.value = value.chapters[0]?.pages[0]?.id ?? null
+  },
+  { immediate: true }
+)
+
+function findPage(id: string): { chapter: BookChapter; page: BookPage } | null {
+  for (const chapter of book.value?.chapters ?? []) {
+    const page = chapter.pages.find((item) => item.id === id)
+    if (page) return { chapter, page }
+  }
+  return null
+}
+
+function toggleChapter(id: string): void {
+  expanded.value = expanded.value.includes(id) ? expanded.value.filter((item) => item !== id) : [...expanded.value, id]
+}
+
+function reveal(id: string): void {
+  if (!expanded.value.includes(id)) expanded.value = [...expanded.value, id]
+}
 
 function patchBook(recipe: (book: BookAsset) => void): void {
   project.patchAsset(props.bookId, (asset) => {
@@ -51,17 +89,16 @@ function renameChapter(item: BookChapter, event: Event): void {
   })
 }
 
-function renamePage(item: BookPage, event: Event): void {
+function renamePage(chapter: BookChapter, item: BookPage, event: Event): void {
   const input = event.target as HTMLInputElement
   const name = cleanName(input.value)
-  const current = chapter.value
-  if (!name || !current || current.pages.some((entry) => entry.id !== item.id && entry.name === name)) {
+  if (!name || chapter.pages.some((entry) => entry.id !== item.id && entry.name === name)) {
     if (name) banner.value = 'That name is already used.'
     input.value = item.name
     return
   }
   patchBook((asset) => {
-    const target = asset.chapters.find((entry) => entry.id === current.id)?.pages.find((entry) => entry.id === item.id)
+    const target = asset.chapters.find((entry) => entry.id === chapter.id)?.pages.find((entry) => entry.id === item.id)
     if (target) target.name = name
   })
 }
@@ -72,7 +109,7 @@ function addChapter(): void {
     const name = uniqueName(asset.chapters.map((item) => item.name), 'Chapter')
     asset.chapters.push({ id, name, pages: [emptyPage(createId(), 'Page', asset.fields)] })
   })
-  chapterId.value = id
+  reveal(id)
   banner.value = ''
 }
 
@@ -85,55 +122,169 @@ function removeChapter(item: BookChapter): void {
   patchBook((asset) => {
     asset.chapters = asset.chapters.filter((entry) => entry.id !== item.id)
   })
-  if (chapterId.value === item.id) chapterId.value = null
+  expanded.value = expanded.value.filter((id) => id !== item.id)
   banner.value = ''
 }
 
-function addPage(): void {
-  const current = chapter.value
-  if (!current || !book.value) return
+function addPage(chapter: BookChapter): void {
+  if (!book.value) return
   const id = createId()
   patchBook((asset) => {
-    const target = asset.chapters.find((entry) => entry.id === current.id)
+    const target = asset.chapters.find((entry) => entry.id === chapter.id)
     if (!target) return
     const name = uniqueName(target.pages.map((item) => item.name), 'Page')
     target.pages.push(emptyPage(id, name, asset.fields))
   })
+  reveal(chapter.id)
 }
 
-function duplicatePage(item: BookPage): void {
-  const current = chapter.value
-  if (!current) return
-  const id = createId()
+function duplicatePage(chapter: BookChapter, item: BookPage): void {
   patchBook((asset) => {
-    const target = asset.chapters.find((entry) => entry.id === current.id)
+    const target = asset.chapters.find((entry) => entry.id === chapter.id)
     const source = target?.pages.find((entry) => entry.id === item.id)
     if (!target || !source) return
     const index = target.pages.indexOf(source)
     target.pages.splice(index + 1, 0, {
-      id,
+      id: createId(),
       name: uniqueName(target.pages.map((entry) => entry.name), `${source.name} copy`),
       values: { ...source.values },
       script: source.script,
       blocks: cloneBlocks(source.blocks, createId)
     })
   })
-  project.openPage(props.bookId, id)
+  reveal(chapter.id)
 }
 
-function removePage(item: BookPage): void {
-  const current = chapter.value
-  if (!current || current.pages.length <= 1) {
+function removePage(chapter: BookChapter, item: BookPage): void {
+  if (chapter.pages.length <= 1) {
     banner.value = 'A chapter needs a page.'
     return
   }
   project.closePage(`${props.bookId}/${item.id}`)
   patchBook((asset) => {
-    const target = asset.chapters.find((entry) => entry.id === current.id)
+    const target = asset.chapters.find((entry) => entry.id === chapter.id)
     if (target) target.pages = target.pages.filter((entry) => entry.id !== item.id)
   })
   banner.value = ''
 }
+
+function onContext(event: MouseEvent): void {
+  const row = (event.target as HTMLElement).closest('.tree-row')
+  const chapterId = row?.getAttribute('data-chapter') ?? null
+  const targetPage = row?.getAttribute('data-page') ?? null
+  menu.value = {
+    x: Math.min(event.clientX, window.innerWidth - 200),
+    y: Math.min(event.clientY, window.innerHeight - 220),
+    chapterId: chapterId || null,
+    pageId: targetPage || null
+  }
+}
+
+function closeMenu(event: PointerEvent): void {
+  if ((event.target as HTMLElement).closest('.context-menu')) return
+  menu.value = null
+}
+
+function menuChapter(): BookChapter | null {
+  const id = menu.value?.chapterId
+  return book.value?.chapters.find((chapter) => chapter.id === id) ?? null
+}
+
+function newChapter(): void {
+  menu.value = null
+  addChapter()
+}
+
+function newPage(): void {
+  const chapter = menuChapter()
+  menu.value = null
+  if (chapter) addPage(chapter)
+}
+
+function startRename(): void {
+  const current = menu.value
+  menu.value = null
+  if (!current?.chapterId) return
+  renaming.value = current.pageId ? { kind: 'page', id: current.pageId } : { kind: 'chapter', id: current.chapterId }
+}
+
+function copyPage(): void {
+  const chapter = menuChapter()
+  const page = chapter?.pages.find((item) => item.id === menu.value?.pageId)
+  menu.value = null
+  if (chapter && page) duplicatePage(chapter, page)
+}
+
+function askDelete(): void {
+  const chapter = menuChapter()
+  const page = chapter?.pages.find((item) => item.id === menu.value?.pageId)
+  menu.value = null
+  if (!chapter) return
+  if (page) {
+    if (chapter.pages.length <= 1) {
+      banner.value = 'A chapter needs a page.'
+      return
+    }
+    deleting.value = { kind: 'page', id: page.id, name: page.name }
+    return
+  }
+  if ((book.value?.chapters.length ?? 0) <= 1) {
+    banner.value = 'A book needs a chapter.'
+    return
+  }
+  deleting.value = { kind: 'chapter', id: chapter.id, name: chapter.name }
+}
+
+function confirmDelete(): void {
+  const target = deleting.value
+  deleting.value = null
+  if (!target) return
+  if (target.kind === 'chapter') {
+    const chapter = book.value?.chapters.find((item) => item.id === target.id)
+    if (chapter) removeChapter(chapter)
+    return
+  }
+  const found = findPage(target.id)
+  if (found) removePage(found.chapter, found.page)
+}
+
+async function focusRename(): Promise<void> {
+  await nextTick()
+  const input = renameInput.value
+  const field = Array.isArray(input) ? input[0] : input
+  field?.focus()
+  field?.select()
+}
+
+watch(renaming, (value) => {
+  if (value) void focusRename()
+})
+
+function commitRename(event: Event): void {
+  if (skipBlur || committing) {
+    skipBlur = false
+    return
+  }
+  committing = true
+  const current = renaming.value
+  renaming.value = null
+  if (current?.kind === 'chapter') {
+    const chapter = book.value?.chapters.find((item) => item.id === current.id)
+    if (chapter) renameChapter(chapter, event)
+  } else if (current?.kind === 'page') {
+    const found = current.id ? findPage(current.id) : null
+    if (found) renamePage(found.chapter, found.page, event)
+  }
+  committing = false
+}
+
+function cancelRename(): void {
+  skipBlur = true
+  renaming.value = null
+}
+
+onMounted(() => window.addEventListener('pointerdown', closeMenu))
+onBeforeUnmount(() => window.removeEventListener('pointerdown', closeMenu))
 
 function addField(): void {
   const id = createId()
@@ -234,36 +385,86 @@ function removeField(field: PageField): void {
 </script>
 
 <template>
-  <div v-if="book" class="book-page">
+  <div v-if="book" class="book-studio">
     <div class="menu-toolbar">
       <strong>{{ book.name }}</strong>
       <button class="btn" type="button" @click="editing = true">Edit page data</button>
     </div>
     <p v-if="banner" class="collection-banner">{{ banner }}</p>
-    <div class="book-columns">
-      <section>
-        <header>
-          <span>Chapters</span>
-          <button class="btn" type="button" @click="addChapter">Add</button>
-        </header>
-        <div v-for="item in book.chapters" :key="item.id" class="book-row" :class="{ selected: chapter?.id === item.id }" @click="chapterId = item.id">
-          <input :value="item.name" @change="renameChapter(item, $event)" @focus="chapterId = item.id" />
-          <button class="row-x" type="button" title="Delete chapter" @click.stop="removeChapter(item)">×</button>
+    <div class="book-studio-body">
+      <div class="book-tree" @contextmenu.prevent="onContext">
+        <div v-for="item in book.chapters" :key="item.id" class="tree-branch" :class="{ 'is-open': expanded.includes(item.id) }">
+          <div class="tree-row" :data-chapter="item.id" @click="toggleChapter(item.id)" @contextmenu.prevent="onContext">
+            <button class="tree-cell twist" type="button" data-twist @click.stop="toggleChapter(item.id)">{{ expanded.includes(item.id) ? '▾' : '▸' }}</button>
+            <span class="tree-cell badge folder" aria-hidden="true">
+              <svg v-if="expanded.includes(item.id)" viewBox="0 0 16 16">
+                <path class="folder-back" d="M1.2 3.2c0-.6.5-1 1.1-1h3.1l1.2 1.3h7c.6 0 1.1.4 1.1 1V6H1.2V3.2z" />
+                <path d="M.4 6.2h15.1L13.9 13c-.1.5-.5.8-1 .8H1.5c-.5 0-.9-.3-1-.8L.4 6.2z" />
+              </svg>
+              <svg v-else viewBox="0 0 16 16">
+                <path d="M1.2 3.6c0-.7.6-1.2 1.2-1.2h3.1L6.8 3.8h6.8c.7 0 1.2.5 1.2 1.2v7.2c0 .7-.5 1.2-1.2 1.2H2.4c-.7 0-1.2-.5-1.2-1.2V3.6z" />
+              </svg>
+            </span>
+            <input
+              v-if="renaming?.kind === 'chapter' && renaming.id === item.id"
+              ref="renameInput"
+              :value="item.name"
+              @click.stop
+              @keydown.enter="commitRename"
+              @keydown.esc="cancelRename"
+              @blur="commitRename"
+            />
+            <span v-else class="row-name">{{ item.name }}</span>
+          </div>
+          <template v-if="expanded.includes(item.id)">
+            <div
+              v-for="(page, index) in item.pages"
+              :key="page.id"
+              class="tree-row"
+              :class="{ selected: page.id === pageId }"
+              :data-chapter="item.id"
+              :data-page="page.id"
+              @click="pageId = page.id"
+              @contextmenu.prevent="onContext"
+            >
+              <span class="tree-cell elbow" :class="{ last: index === item.pages.length - 1 }" aria-hidden="true"></span>
+              <span class="tree-cell file-mark" aria-hidden="true">•</span>
+              <input
+                v-if="renaming?.kind === 'page' && renaming.id === page.id"
+                ref="renameInput"
+                :value="page.name"
+                @click.stop
+                @keydown.enter="commitRename"
+                @keydown.esc="cancelRename"
+                @blur="commitRename"
+              />
+              <span v-else class="row-name">{{ page.name }}</span>
+            </div>
+          </template>
         </div>
-      </section>
-      <section v-if="chapter">
-        <header>
-          <span>{{ chapter.name }}</span>
-          <button class="btn" type="button" @click="addPage">Add page</button>
-        </header>
-        <div v-for="item in chapter.pages" :key="item.id" class="book-row">
-          <input :value="item.name" @change="renamePage(item, $event)" />
-          <button class="btn quiet" type="button" @click="project.openPage(bookId, item.id)">Open</button>
-          <button class="btn quiet" type="button" @click="duplicatePage(item)">Duplicate</button>
-          <button class="row-x" type="button" title="Delete page" @click="removePage(item)">×</button>
-        </div>
-      </section>
+      </div>
+      <div class="book-stage">
+        <PageEditor v-if="pageId" :key="pageId" :book-id="bookId" :page-id="pageId" />
+      </div>
     </div>
+    <div v-if="menu" class="context-menu" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }">
+      <button v-if="!menu.chapterId" type="button" @click="newChapter">New chapter</button>
+      <template v-else-if="!menu.pageId">
+        <button type="button" @click="newChapter">New chapter</button>
+        <button type="button" @click="newPage">New page</button>
+        <div class="menu-sep"></div>
+        <button type="button" @click="startRename">Rename</button>
+        <button type="button" @click="askDelete">Delete</button>
+      </template>
+      <template v-else>
+        <button type="button" @click="startRename">Rename</button>
+        <button type="button" @click="copyPage">Duplicate</button>
+        <button type="button" @click="askDelete">Delete</button>
+      </template>
+    </div>
+    <Modal v-if="deleting" title="Delete" confirm-label="Delete" danger @cancel="deleting = null" @confirm="confirmDelete">
+      <p>Delete {{ deleting.name }}? This cannot be undone.</p>
+    </Modal>
     <div v-if="editing" class="modal-backdrop" @click.self="editing = false">
       <div class="modal wide" role="dialog" aria-label="Page data">
         <h2>Page data</h2>

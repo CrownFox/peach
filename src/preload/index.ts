@@ -24,6 +24,8 @@ const api: PeachApi = {
   saveWorkspace: (projectDir, workspace) => ipcRenderer.invoke('project:saveWorkspace', projectDir, workspace),
   importImage: (projectDir, relativePath, sourcePath) =>
     ipcRenderer.invoke('project:importImage', projectDir, relativePath, sourcePath),
+  importGameIcon: (projectDir, sourcePath) => ipcRenderer.invoke('project:importIcon', projectDir, sourcePath),
+  clearGameIcon: (projectDir) => ipcRenderer.invoke('project:clearIcon', projectDir),
   exportGame: (projectDir, destination) => ipcRenderer.invoke('project:export', projectDir, destination),
   listRecentProjects: () => ipcRenderer.invoke('recent:list'),
   forgetRecentProject: (projectPath) => ipcRenderer.invoke('recent:forget', projectPath),

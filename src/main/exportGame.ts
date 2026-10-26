@@ -27,6 +27,19 @@ export async function exportGame(projectDir: string, destination: string): Promi
       warnings.push(`Could not export image file ${asset.file}.`)
     }
   }
+  let icon: string | null = null
+  if (snapshot.meta.icon) {
+    const target = `media/${snapshot.meta.icon.split('/').pop()}`
+    try {
+      const from = resolveInside(projectDir, snapshot.meta.icon)
+      const to = path.join(destination, ...target.split('/'))
+      await fs.mkdir(path.dirname(to), { recursive: true })
+      await fs.copyFile(from, to)
+      icon = target
+    } catch {
+      warnings.push('Could not export the game icon.')
+    }
+  }
   const assets = exportableAssets(snapshot.assets, (file) => copied.get(file) ?? file).map((asset) => {
     const original = snapshot.assets.find((item) => item.id === asset.id)
     return { ...assetDocument(asset), location: assetLocation(original?.relativePath ?? asset.relativePath) }
@@ -35,6 +48,8 @@ export async function exportGame(projectDir: string, destination: string): Promi
   const game = {
     formatVersion: snapshot.meta.formatVersion,
     name: snapshot.meta.name,
+    author: snapshot.meta.author,
+    icon,
     entryMenuId: snapshot.meta.entryMenuId,
     assets
   }

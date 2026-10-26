@@ -5,6 +5,8 @@ export type AssetType = 'menu' | 'button' | 'image' | 'script' | 'panel' | 'coll
 export type ProjectMeta = {
   formatVersion: number
   name: string
+  author: string
+  icon: string | null
   entryMenuId: string | null
 }
 
@@ -74,6 +76,7 @@ export type ComponentBase = {
   handle: string
   scriptId: string | null
   script: string
+  properties?: Record<string, string | boolean | number>
   tint: string
   visible: boolean
 }

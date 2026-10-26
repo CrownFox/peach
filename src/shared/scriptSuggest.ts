@@ -1,5 +1,6 @@
 import type { MenuComponent } from './types'
 import { KEYS } from './keys'
+import { propertiesInScope, type ScriptProperty } from './scriptProperties'
 
 export type ScriptHandle = {
   name: string
@@ -10,6 +11,9 @@ export type ScriptHints = {
   handles: ScriptHandle[]
   self: 'menu' | MenuComponent['type'] | 'any'
   parent?: 'pageViewer'
+  suggestProperties?: boolean
+  propertySources?: string[]
+  outerProperties?: ScriptProperty[]
 }
 
 export type Suggestion = {
@@ -112,17 +116,18 @@ const globals: Suggestion[] = [
   ...KEYS.map((key) => ({ label: key.name, insertText: key.name, kind: 'field' as const, detail: key.code }))
 ]
 
-export function scriptSuggestions(beforeWord: string, hints: ScriptHints): Suggestion[] {
+export function scriptSuggestions(beforeWord: string, hints: ScriptHints, source = ''): Suggestion[] {
   if (inComment(beforeWord) || inString(beforeWord)) return []
+  const properties = hints.suggestProperties ? propertiesInScope(hints.propertySources ?? [], source, hints.outerProperties ?? []) : []
   const member = memberContext(beforeWord)
   if (!member) {
-    if (!hints.parent) return globals
-    return [...globals, { label: 'parent', insertText: 'parent', kind: 'field', detail: 'The page viewer' }]
+    const base = hints.parent ? [...globals, { label: 'parent', insertText: 'parent', kind: 'field' as const, detail: 'The page viewer' }] : globals
+    return withProperties(base, properties)
   }
-  return members(member, hints)
+  return members(member, hints, properties)
 }
 
-function members(member: { chain: string[]; colon: boolean }, hints: ScriptHints): Suggestion[] {
+function members(member: { chain: string[]; colon: boolean }, hints: ScriptHints, properties: ScriptProperty[]): Suggestion[] {
   const { chain, colon } = member
   if (chain.length === 1 && chain[0] === 'game' && !colon) {
     return [
@@ -168,8 +173,43 @@ function members(member: { chain: string[]; colon: boolean }, hints: ScriptHints
     const types = hints.self === 'any' ? componentTypes : [hints.self]
     return componentFields(types, colon)
   }
-  if (!colon && chain.length === 1) return libraries[chain[0] ?? ''] ?? []
+  if (!colon && chain.length === 1) {
+    const property = properties.find((item) => item.name === chain[0])
+    if (property?.type === 'bookPage') {
+      return [
+        { label: 'book', insertText: 'book', kind: 'field', detail: 'Book path' },
+        { label: 'page', insertText: 'page', kind: 'field', detail: 'Chapter/page path' }
+      ]
+    }
+    if (property) return []
+    return libraries[chain[0] ?? ''] ?? []
+  }
   return []
+}
+
+function withProperties(items: Suggestion[], properties: ScriptProperty[]): Suggestion[] {
+  if (properties.length === 0) return items
+  const names = new Set(properties.map((property) => property.name))
+  return [...properties.map(propertySuggestion), ...items.filter((item) => !names.has(item.label))]
+}
+
+function propertySuggestion(property: ScriptProperty): Suggestion {
+  const type =
+    property.type === 'text' || property.type === 'string'
+      ? 'string'
+      : property.type === 'bookPage'
+        ? 'book and page'
+        : property.type === 'boolean'
+          ? 'true or false'
+          : property.type === 'integer' || property.type === 'float'
+            ? property.type
+            : `${property.type} path`
+  return {
+    label: property.name,
+    insertText: property.name,
+    kind: 'field',
+    detail: property.label === property.name ? type : `${property.label}. ${type}`
+  }
 }
 
 function handleSuggestions(hints: ScriptHints): Suggestion[] {

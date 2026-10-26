@@ -4,7 +4,7 @@ import { clampRect, createMenuComponent, duplicateMenuComponent } from '@shared/
 import { componentScriptTemplate } from '@shared/componentScript'
 import { joinPath } from '@shared/paths'
 import { buildTree, expandFolderPath } from '@shared/tree'
-import { defaultWorkspace } from '@shared/workspace'
+import { defaultWorkspace, GAME_PROPERTIES_WINDOW } from '@shared/workspace'
 import type { Asset, AssetType, MenuComponent, ProjectSnapshot, WorkspaceWindow } from '@shared/types'
 import { isCanvas, isMenu } from '@shared/types'
 import { ipcError } from '@/ipcError'
@@ -156,6 +156,39 @@ export const useProjectStore = defineStore('project', {
           if (this.meta) this.meta = { ...this.meta, entryMenuId: previous }
           throw error
         }
+      })
+    },
+    async updateMeta(patch: { name?: string; author?: string }) {
+      if (!this.meta) return
+      const previous = { name: this.meta.name, author: this.meta.author }
+      const meta = cloneData({ ...this.meta, ...patch })
+      this.meta = meta
+      await this.run(async () => {
+        try {
+          await window.peach.saveMeta(this.requireDir(), meta)
+        } catch (error) {
+          if (this.meta) this.meta = { ...this.meta, ...previous }
+          throw error
+        }
+      })
+    },
+    openGameProperties() {
+      this.ensureWindow(GAME_PROPERTIES_WINDOW, 420, 520)
+      this.focusWindow(GAME_PROPERTIES_WINDOW)
+      this.setTab('editor')
+    },
+    async importGameIcon() {
+      const source = await window.peach.chooseImage()
+      if (!source) return
+      await this.structural(async () => {
+        const snapshot = await window.peach.importGameIcon(this.requireDir(), source)
+        this.applySnapshot(snapshot)
+      })
+    },
+    async clearGameIcon() {
+      await this.structural(async () => {
+        const snapshot = await window.peach.clearGameIcon(this.requireDir())
+        this.applySnapshot(snapshot)
       })
     },
     async importImage(relativePath: string, sourcePath: string) {

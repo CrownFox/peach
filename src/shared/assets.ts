@@ -170,13 +170,25 @@ function parseSliceFill(value: unknown): SliceFill {
   return value === 'tile' ? 'tile' : 'stretch'
 }
 
-function binding(value: Record<string, unknown>): Pick<ComponentBase, 'handle' | 'scriptId' | 'script'> {
+function binding(value: Record<string, unknown>): Pick<ComponentBase, 'handle' | 'scriptId' | 'script' | 'properties'> {
   const handle = str(value.handle).trim()
   return {
     handle: isScriptHandle(handle) ? handle : '',
     scriptId: idOrNull(value.scriptId),
-    script: str(value.script)
+    script: str(value.script),
+    properties: parseProperties(value.properties)
   }
+}
+
+function parseProperties(value: unknown): Record<string, string | boolean | number> {
+  if (!isRecord(value)) return {}
+  const properties: Record<string, string | boolean | number> = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue
+    if (typeof item === 'string' || typeof item === 'boolean') properties[key] = item
+    else if (typeof item === 'number' && Number.isFinite(item)) properties[key] = item
+  }
+  return properties
 }
 
 const COMPONENT_NAMES: Record<MenuComponent['type'], string> = {
@@ -573,11 +585,15 @@ function parseCanvasAsset(
 
 export function parseMeta(value: unknown, fallbackName: string): ProjectMeta {
   if (!isRecord(value)) {
-    return { formatVersion: FORMAT_VERSION, name: fallbackName, entryMenuId: null }
+    return { formatVersion: FORMAT_VERSION, name: fallbackName, author: '', icon: null, entryMenuId: null }
   }
+  const name = str(value.name, fallbackName).trim() || fallbackName
+  const icon = str(value.icon).trim()
   return {
     formatVersion: num(value.formatVersion, FORMAT_VERSION),
-    name: str(value.name, fallbackName),
+    name,
+    author: str(value.author).trim(),
+    icon: icon || null,
     entryMenuId: idOrNull(value.entryMenuId)
   }
 }
@@ -650,6 +666,7 @@ export function createImageComponent(components: MenuComponent[]): ImageComponen
     handle: '',
     scriptId: null,
     script: '',
+    properties: {},
     ...defaultPixels(8 + shift, 8 + shift, 32, 28),
     imageId: null,
     fit: 'stretch',
@@ -666,6 +683,7 @@ function componentBase(components: MenuComponent[], label: string, rect: { x: nu
     handle: '',
     scriptId: null,
     script: '',
+    properties: {},
     tint: '#ffffff',
     visible: true,
     ...defaultPixels(rect.x, rect.y + shift, rect.width, rect.height)
@@ -852,6 +870,7 @@ export function createButtonComponent(components: MenuComponent[]): ButtonCompon
     handle: '',
     scriptId: null,
     script: '',
+    properties: {},
     ...defaultPixels(30, 70 - shift, 40, 12),
     buttonId: null,
     enabled: true,

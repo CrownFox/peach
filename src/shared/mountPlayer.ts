@@ -10,6 +10,8 @@ import { parseAsset } from './assets'
 
 type GameFile = {
   name?: string
+  author?: string
+  icon?: string | null
   entryMenuId?: string | null
   assets?: unknown[]
 }
@@ -28,6 +30,18 @@ async function load(container: HTMLElement): Promise<void> {
     return
   }
   document.title = game.name || 'Game'
+  if (game.author) {
+    const author = document.createElement('meta')
+    author.name = 'author'
+    author.content = game.author
+    document.head.append(author)
+  }
+  if (game.icon) {
+    const icon = document.createElement('link')
+    icon.rel = 'icon'
+    icon.href = game.icon
+    document.head.append(icon)
+  }
   const assets = (game.assets ?? []).flatMap((item) => {
     try {
       return [parseAsset(item, '')]

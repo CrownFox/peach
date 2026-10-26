@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { editor } from 'monaco-editor/editor/editor.api.js'
 import { useProjectStore } from '@/stores/project'
 import { monacoApi, setScriptHints, type ScriptHints } from '@/script/monaco'
+import { componentProperties } from '@shared/scriptProperties'
 import { isCanvas, type CanvasAsset } from '@shared/types'
 
 const props = defineProps<{ tab: string }>()
@@ -16,6 +17,11 @@ function componentHandles(canvas: CanvasAsset): ScriptHints['handles'] {
   return canvas.components.flatMap((component) => (component.handle ? [{ name: component.handle, type: component.type }] : []))
 }
 
+function referencedScript(id: string | null): string {
+  const asset = id ? project.asset(id) : null
+  return asset?.type === 'script' ? asset.source : ''
+}
+
 function hintsFor(tab: string): ScriptHints {
   if (tab.startsWith('menu:')) {
     const menu = project.asset(tab.slice(5))
@@ -23,14 +29,30 @@ function hintsFor(tab: string): ScriptHints {
   }
   if (tab.startsWith('composite:')) {
     const canvas = project.asset(tab.slice(10))
-    return { handles: canvas && isCanvas(canvas) ? componentHandles(canvas) : [], self: 'composite' }
+    const composite = canvas?.type === 'composite' ? canvas : null
+    return {
+      handles: composite ? componentHandles(composite) : [],
+      self: 'composite',
+      suggestProperties: true,
+      propertySources: [referencedScript(composite?.scriptId ?? null)]
+    }
   }
   if (tab.startsWith('component:')) {
     const [, menuId, componentId] = tab.split(':')
     const menu = project.asset(menuId ?? null)
-    const component = menu && isCanvas(menu) ? menu.components.find((item) => item.id === componentId) : null
-    const handles = menu && isCanvas(menu) ? componentHandles(menu) : []
-    if (component) return { handles, self: component.type }
+    const canvas = menu && isCanvas(menu) ? menu : null
+    const component = canvas?.components.find((item) => item.id === componentId) ?? null
+    const handles = canvas ? componentHandles(canvas) : []
+    const outerProperties = canvas?.type === 'composite' ? componentProperties(referencedScript(canvas.scriptId), canvas.script) : []
+    if (component) {
+      return {
+        handles,
+        self: component.type,
+        suggestProperties: true,
+        propertySources: [referencedScript(component.scriptId)],
+        outerProperties
+      }
+    }
     return { handles, self: 'any' }
   }
   if (tab.startsWith('pagescript:')) return { handles: [], self: 'any', parent: 'pageViewer' }
@@ -43,7 +65,7 @@ function hintsFor(tab: string): ScriptHints {
       const used = asset.scriptId === id || asset.components.some((component) => component.scriptId === id)
       if (used) handles.push(...componentHandles(asset))
     }
-    return { handles, self: 'any' }
+    return { handles, self: 'any', suggestProperties: true }
   }
   return { handles: [], self: 'any' }
 }

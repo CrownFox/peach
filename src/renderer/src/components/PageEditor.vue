@@ -599,7 +599,7 @@ function onConditionClick(event: MouseEvent, id: string): void {
         <p v-else class="tree-hint">Select an insert to edit it. Text formatting applies to the words at the cursor.</p>
         <div v-if="book.fields.length > 0" class="side-fields">
           <p class="side-kicker">Page data</p>
-          <template v-for="field in book.fields" :key="field.id">
+          <div v-for="field in book.fields" :key="field.id" class="page-data-group">
             <AssetSelect
               v-if="isAssetPageField(field.type)"
               :label="field.name"
@@ -625,7 +625,7 @@ function onConditionClick(event: MouseEvent, id: string): void {
               />
               <input v-else :value="String(shownField(field))" @change="setFieldValue(field.id, ($event.target as HTMLInputElement).value)" />
             </label>
-          </template>
+          </div>
         </div>
       </aside>
     </div>

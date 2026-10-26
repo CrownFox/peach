@@ -1177,4 +1177,61 @@ describe('play session', () => {
     expect(() => parseDocument('{', 'saves')).toThrow('That save file could not be read.')
     expect(emptyDocument('saves').slots).toEqual({})
   })
+
+  it('gives each copy the property declared by its script', () => {
+    const play = button(
+      'play',
+      'play',
+      `---@property targetPage bookPage "Next Page"
+function onInteract()
+  print(targetPage.book .. " " .. targetPage.page)
+end`
+    )
+    play.properties = { targetPage: encodeBookPage('Books/Journal', 'Chapter/Page') }
+    const label = createMenuComponent('label', [])
+    label.id = 'label'
+    label.handle = 'label'
+    const badge = createAsset('composite', 'Badge', 'Badge.composite.json', 'badge') as CompositeAsset
+    badge.script = `---@property caption text "Caption"
+function onLoad()
+  print(caption)
+end
+`
+    badge.components = [label]
+    const one = createMenuComponent('composite', [])
+    const two = createMenuComponent('composite', [])
+    one.id = 'one'
+    two.id = 'two'
+    one.handle = 'one'
+    two.handle = 'two'
+    one.properties = { caption: 'A' }
+    two.properties = { caption: 'B' }
+    if (one.type === 'composite') one.compositeId = 'badge'
+    if (two.type === 'composite') two.compositeId = 'badge'
+    const main = menu('main', 'Main Menu.menu.json', '', [play, one, two])
+    const session = start([main, plate, plateButton, badge], 'main')
+    expect(session.logs.map((entry) => entry.text)).toEqual(['A', 'B'])
+    session.activate('play')
+    expect(session.logs.map((entry) => entry.text)).toEqual(['A', 'B', 'Books/Journal Chapter/Page'])
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('reads string, integer, and float properties', () => {
+    const script = `---@property title string "Title"
+---@property count integer "Count"
+---@property scale float "Scale"
+function onInteract()
+  if title == "Go" and count == 3 and scale == 1.25 then print("set") end
+  if title == "" and count == 0 and scale == 0 then print("empty") end
+end`
+    const filled = button('filled', 'filled', script)
+    filled.properties = { title: 'Go', count: 3.9, scale: 1.25 }
+    const blank = button('blank', 'blank', script)
+    const main = menu('main', 'Main Menu.menu.json', '', [filled, blank])
+    const session = start([main, plate, plateButton], 'main')
+    session.activate('filled')
+    session.activate('blank')
+    expect(session.logs.map((entry) => entry.text)).toEqual(['set', 'empty'])
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
 })

@@ -84,4 +84,39 @@ describe('script suggestions', () => {
     expect(scriptSuggestions('-- game.', menu)).toEqual([])
     expect(scriptSuggestions('print("game.', menu)).toEqual([])
   })
+
+  it('suggests properties declared at the top of the script', () => {
+    const source = `---@property targetPage bookPage "Next Page"
+---@property count integer "Count"
+function onInteract()
+end
+`
+    const hints: ScriptHints = { ...button, suggestProperties: true, propertySources: ['---@property caption text "Caption"\n'] }
+    const labels = scriptSuggestions('', hints, source).map((item) => item.label)
+    expect(labels).toContain('targetPage')
+    expect(labels).toContain('count')
+    expect(labels).toContain('caption')
+    expect(scriptSuggestions('', button, source).map((item) => item.label)).not.toContain('targetPage')
+    const page = scriptSuggestions('', hints, source).find((item) => item.label === 'targetPage')
+    expect(page?.detail).toBe('Next Page. book and page')
+    expect(scriptSuggestions('targetPage.', hints, source).map((item) => item.label)).toEqual(['book', 'page'])
+    expect(scriptSuggestions('count.', hints, source)).toEqual([])
+  })
+
+  it('lets the open script replace a shared property and keeps a composite property', () => {
+    const shared = '---@property targetPage bookPage "Shared"\n---@property caption text "Caption"\n'
+    const source = '---@property targetPage string "Local"\n'
+    const hints: ScriptHints = {
+      self: 'button',
+      handles: [],
+      suggestProperties: true,
+      propertySources: [shared],
+      outerProperties: [{ name: 'caption', type: 'text', label: 'Outer' }, { name: 'scale', type: 'float', label: 'Scale' }]
+    }
+    const target = scriptSuggestions('', hints, source).find((item) => item.label === 'targetPage')
+    const caption = scriptSuggestions('', hints, source).find((item) => item.label === 'caption')
+    expect(target?.detail).toBe('Local. string')
+    expect(caption?.detail).toBe('Caption. string')
+    expect(scriptSuggestions('', hints, source).map((item) => item.label)).toContain('scale')
+  })
 })

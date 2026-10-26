@@ -14,7 +14,7 @@ import { assetFileName, joinPath, parentPath, sanitizeFileStem, stemOfAssetFile,
 import { planTreeMove, remapMovedPaths } from '@shared/tree'
 import type { Asset, MutationResult, ProjectSnapshot } from '@shared/types'
 import { FORMAT_VERSION } from '@shared/types'
-import { defaultWorkspace, parseWorkspace } from '@shared/workspace'
+import { defaultWorkspace, GAME_PROPERTIES_WINDOW, parseWorkspace } from '@shared/workspace'
 
 const SKIP_DIRS = new Set(['node_modules', 'out', 'dist', '.git'])
 
@@ -38,7 +38,7 @@ export async function createProject(parentDir: string, name: string): Promise<Pr
     }
     throw error
   }
-  const meta = { formatVersion: FORMAT_VERSION, name: stem, entryMenuId: null }
+  const meta = { formatVersion: FORMAT_VERSION, name: stem, author: '', icon: null, entryMenuId: null }
   await writeJson(path.join(dir, 'project.json'), meta)
   await writeJson(path.join(dir, 'workspace.json'), defaultWorkspace())
   return readProject(dir)
@@ -69,11 +69,13 @@ export async function readProject(projectDir: string): Promise<ProjectSnapshot> 
   const known = new Set(assets.map((asset) => asset.id))
   workspace = {
     ...workspace,
-    windows: workspace.windows.filter((window) => known.has(window.assetId)),
+    windows: workspace.windows.filter((window) => window.assetId === GAME_PROPERTIES_WINDOW || known.has(window.assetId)),
     openMenuIds: workspace.openMenuIds.filter((id) => known.has(id)),
     openCollectionIds: workspace.openCollectionIds.filter((id) => known.has(id)),
-    openBookIds: workspace.openBookIds.filter((id) => assets.some((asset) => asset.id === id && asset.type === 'book')),
-    openPageTabs: workspace.openPageTabs.filter((tab) => pageTabAlive(tab, assets)),
+    openBookIds: [...new Set([...workspace.openBookIds, ...workspace.openPageTabs.filter((tab) => pageTabAlive(tab, assets)).map((tab) => tab.slice(0, tab.indexOf('/')))])].filter(
+      (id) => assets.some((asset) => asset.id === id && asset.type === 'book')
+    ),
+    openPageTabs: [],
     expanded: workspace.expanded.length > 0 ? workspace.expanded : ['']
   }
   if (workspace.activeTab.startsWith('menu:') && !known.has(workspace.activeTab.slice(5))) {
@@ -85,8 +87,9 @@ export async function readProject(projectDir: string): Promise<ProjectSnapshot> 
   if (workspace.activeTab.startsWith('book:') && !workspace.openBookIds.includes(workspace.activeTab.slice('book:'.length))) {
     workspace.activeTab = 'editor'
   }
-  if (workspace.activeTab.startsWith('page:') && !workspace.openPageTabs.includes(workspace.activeTab.slice('page:'.length))) {
-    workspace.activeTab = 'editor'
+  if (workspace.activeTab.startsWith('page:')) {
+    const bookId = workspace.activeTab.slice('page:'.length).split('/')[0] ?? ''
+    workspace.activeTab = bookId && workspace.openBookIds.includes(bookId) ? `book:${bookId}` : 'editor'
   }
   if (meta.entryMenuId && !known.has(meta.entryMenuId)) meta.entryMenuId = null
   return { projectDir, meta, folders, assets, workspace, warnings }
@@ -261,13 +264,35 @@ export async function deleteNode(projectDir: string, relativePath: string): Prom
   return readProject(projectDir)
 }
 
+const ICON_STEM = 'game-icon'
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
+
+export async function importGameIcon(projectDir: string, sourcePath: string): Promise<ProjectSnapshot> {
+  const snapshot = await readProject(projectDir)
+  const extension = path.extname(sourcePath).toLowerCase()
+  if (!IMAGE_EXTENSIONS.has(extension)) throw new Error('Import a PNG, JPEG, WebP, or GIF file.')
+  const preferred = `${ICON_STEM}${extension}`
+  const ownedByImage = snapshot.assets.some((asset) => asset.type === 'image' && asset.file === preferred)
+  const file = ownedByImage ? await uniqueFilename(projectDir, ICON_STEM, extension) : preferred
+  await fs.copyFile(sourcePath, resolveInside(projectDir, file))
+  if (snapshot.meta.icon && snapshot.meta.icon !== file) await deleteImageFileIfUnused(projectDir, snapshot.assets, snapshot.meta.icon, '')
+  await saveMeta(projectDir, { ...snapshot.meta, icon: file })
+  return readProject(projectDir)
+}
+
+export async function clearGameIcon(projectDir: string): Promise<ProjectSnapshot> {
+  const snapshot = await readProject(projectDir)
+  if (snapshot.meta.icon) await deleteImageFileIfUnused(projectDir, snapshot.assets, snapshot.meta.icon, '')
+  await saveMeta(projectDir, { ...snapshot.meta, icon: null })
+  return readProject(projectDir)
+}
+
 export async function importImage(projectDir: string, relativePath: string, sourcePath: string): Promise<ProjectSnapshot> {
   const snapshot = await readProject(projectDir)
   const asset = snapshot.assets.find((item) => item.relativePath === relativePath)
   if (!asset || asset.type !== 'image') throw new Error('Choose an image asset before importing.')
-  const allowed = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
   const extension = path.extname(sourcePath).toLowerCase()
-  if (!allowed.has(extension)) throw new Error('Import a PNG, JPEG, WebP, or GIF file.')
+  if (!IMAGE_EXTENSIONS.has(extension)) throw new Error('Import a PNG, JPEG, WebP, or GIF file.')
   const parent = parentPath(relativePath)
   const stem = sanitizeFileStem(path.basename(sourcePath, extension))
   const filename = await uniqueFilename(resolveInside(projectDir, parent), stem, extension)

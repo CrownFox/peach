@@ -4,6 +4,7 @@ import type { RecentProject } from '@shared/recent'
 import { usePlayStore } from '@/stores/play'
 import { useProjectStore } from '@/stores/project'
 import { useSessionStore } from '@/stores/session'
+import { GAME_PROPERTIES_WINDOW } from '@shared/workspace'
 import AssetBrowser from './components/AssetBrowser.vue'
 import BookEditor from './components/BookEditor.vue'
 import CollectionEditor from './components/CollectionEditor.vue'
@@ -11,7 +12,6 @@ import EditorCanvas from './components/EditorCanvas.vue'
 import GameView from './components/GameView.vue'
 import InspectorPanel from './components/InspectorPanel.vue'
 import MenuEditor from './components/MenuEditor.vue'
-import PageEditor from './components/PageEditor.vue'
 import ScriptEditor from './components/ScriptEditor.vue'
 import Modal from './components/Modal.vue'
 import ProjectTree from './components/ProjectTree.vue'
@@ -46,19 +46,6 @@ const openBooks = computed(() =>
   project.workspace.openBookIds.flatMap((id) => {
     const asset = project.asset(id)
     return asset?.type === 'book' ? [asset] : []
-  })
-)
-const openPages = computed(() =>
-  project.workspace.openPageTabs.flatMap((key) => {
-    const slash = key.indexOf('/')
-    const book = project.asset(key.slice(0, slash))
-    if (book?.type !== 'book') return []
-    const pageId = key.slice(slash + 1)
-    for (const chapter of book.chapters) {
-      const page = chapter.pages.find((item) => item.id === pageId)
-      if (page) return [{ key, title: `${book.name}: ${page.name}` }]
-    }
-    return []
   })
 )
 
@@ -140,6 +127,14 @@ function scriptTitle(key: string): string {
     <div v-else class="workspace">
       <aside class="tree-pane">
         <div class="pane-label">Project</div>
+        <button
+          class="tree-row properties-entry"
+          :class="{ selected: project.focusedWindow?.assetId === GAME_PROPERTIES_WINDOW && project.workspace.activeTab === 'editor' }"
+          type="button"
+          @click="project.openGameProperties()"
+        >
+          <span class="row-name">Properties</span>
+        </button>
         <ProjectTree />
       </aside>
       <main class="center-pane">
@@ -195,17 +190,6 @@ function scriptTitle(key: string): string {
             <span class="tab-close" @click.stop="project.closeBook(item.id)">×</span>
           </button>
           <button
-            v-for="item in openPages"
-            :key="item.key"
-            class="tab"
-            :class="{ active: project.workspace.activeTab === `page:${item.key}` }"
-            type="button"
-            @click="project.setTab(`page:${item.key}`)"
-          >
-            <span>{{ item.title }}</span>
-            <span class="tab-close" @click.stop="project.closePage(item.key)">×</span>
-          </button>
-          <button
             v-for="key in project.workspace.openScriptTabs"
             :key="key"
             class="tab"
@@ -243,13 +227,6 @@ function scriptTitle(key: string): string {
             v-show="project.workspace.activeTab === `book:${item.id}`"
             :key="item.id"
             :book-id="item.id"
-          />
-          <PageEditor
-            v-for="item in openPages"
-            v-show="project.workspace.activeTab === `page:${item.key}`"
-            :key="item.key"
-            :book-id="item.key.slice(0, item.key.indexOf('/'))"
-            :page-id="item.key.slice(item.key.indexOf('/') + 1)"
           />
           <ScriptEditor
             v-if="project.workspace.openScriptTabs.length > 0"

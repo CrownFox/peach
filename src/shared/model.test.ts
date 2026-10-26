@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assetDocument, clampRect, createAsset, createButtonAsset, createButtonComponent, createMenuComponent, createPageViewerComponent, createPanelAsset, duplicateMenuComponent, parseAsset, planDuplicate } from './assets'
+import { assetDocument, clampRect, createAsset, createButtonAsset, createButtonComponent, createMenuComponent, createPageViewerComponent, createPanelAsset, duplicateMenuComponent, parseAsset, parseMeta, planDuplicate } from './assets'
 import { writeComponentProperty, type SceneOverrides } from './overrides'
 import { buildScene, devicePixelScale, fitFrame, fittedBorderWidths, nineSliceLayout, snapNineSlice } from './scene'
 import { assetLocation, sanitizeFileStem, uniqueName } from './paths'
@@ -490,6 +490,17 @@ describe('documents', () => {
     const parsed = parseAsset(assetDocument(asset), 'elsewhere.image.json')
     expect(parsed).toMatchObject({ id: 'img', name: 'Logo', file: 'UI/logo.png', relativePath: 'elsewhere.image.json' })
     expect(assetDocument(asset)).not.toHaveProperty('relativePath')
+  })
+
+  it('reads a game title, author, and icon from project data', () => {
+    expect(parseMeta({ name: 'Peach', author: 'Ada', icon: 'game-icon.png', entryMenuId: 'menu' }, 'Folder')).toEqual({
+      formatVersion: 2,
+      name: 'Peach',
+      author: 'Ada',
+      icon: 'game-icon.png',
+      entryMenuId: 'menu'
+    })
+    expect(parseMeta({ name: 'Peach' }, 'Folder')).toMatchObject({ author: '', icon: null, entryMenuId: null })
   })
 
   it('keeps a component inside its parent while resizing', () => {

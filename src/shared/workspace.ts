@@ -1,5 +1,7 @@
 import type { Workspace } from './types'
 
+export const GAME_PROPERTIES_WINDOW = 'game-properties'
+
 export function defaultWorkspace(): Workspace {
   return {
     expanded: [''],

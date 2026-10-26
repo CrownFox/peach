@@ -27,6 +27,7 @@ import { findAssetByLocation } from './refs'
 import { KEYS } from './keys'
 import { type SavedOverride, type SavedValue, type SaveKind, slotNumber } from './saves'
 import { snapshotBook, clipDisplay, decodeBookPage, displayLength, doodadScripts, findPage, inputValue, pageFieldValue, playDisplay, type LoadedBook, type PageDisplay } from './books'
+import { componentProperties, scriptPropertyNumber, type ScriptPropertyType } from './scriptProperties'
 import type { Asset, BookPage, CompositeAsset, ImageAsset, MenuAsset, MenuComponent, PageField } from './types'
 
 export type PlayFrame = {
@@ -190,6 +191,7 @@ export class LuaHost {
       if (modal) this.modalFrames.add(frame)
       this.compile(frame, menu, stamp)
     }
+    this.refreshProperties(frame)
     if (!runOnLoad) return
     this.loadPages(frame)
     const compiled = this.compiled.get(frame)
@@ -226,12 +228,14 @@ export class LuaHost {
         const env = this.newEnv(parentRef)
         compositeEnvs.set(id, env)
         this.setSelf(env, { kind: 'composite', frame, instanceId: id })
+        this.bindProperties(env, component, asset)
         this.runSources(env, sourceFor(this.hooks.assets(), asset.scriptId), asset.script, asset.name)
         this.compilePieces(frame, asset.components, env, id, [...stack, asset.id], componentEnvs, compositeEnvs)
         continue
       }
       if (component.type === 'composite') continue
       const env = this.newEnv(parentRef)
+      this.bindProperties(env, component, null)
       this.runSources(env, sourceFor(this.hooks.assets(), component.scriptId), component.script, component.name)
       componentEnvs.set(id, env)
     }
@@ -1481,6 +1485,68 @@ export class LuaHost {
     const id = lua.lua_type(L, -1) === lua.LUA_TNUMBER ? lua.lua_tointeger(L, -1) : 0
     lua.lua_pop(L, 2)
     return this.objects.get(id) ?? null
+  }
+
+  private refreshProperties(frame: PlayFrame): void {
+    const menu = this.menu(frame.menuId)
+    const compiled = this.compiled.get(frame)
+    if (!menu || !compiled) return
+    this.bindTree(menu.components, '', [], compiled)
+  }
+
+  private bindTree(components: MenuComponent[], parent: string, stack: string[], compiled: CompiledMenu): void {
+    for (const component of components) {
+      const id = parent ? `${parent}/${component.id}` : component.id
+      if (component.type === 'composite' && component.compositeId && !stack.includes(component.compositeId)) {
+        const asset = compositeById(this.hooks.assets(), component.compositeId)
+        const env = compiled.composites.get(id)
+        if (env !== undefined && asset) this.bindProperties(env, component, asset)
+        if (asset) this.bindTree(asset.components, id, [...stack, asset.id], compiled)
+        continue
+      }
+      if (component.type === 'composite') continue
+      const env = compiled.components.get(id)
+      if (env !== undefined) this.bindProperties(env, component, null)
+    }
+  }
+
+  private bindProperties(envRef: number, component: MenuComponent, asset: CompositeAsset | null): void {
+    const shared = asset ? sourceFor(this.hooks.assets(), asset.scriptId) : sourceFor(this.hooks.assets(), component.scriptId)
+    const local = asset ? asset.script : component.script
+    const values = component.properties ?? {}
+    for (const property of componentProperties(shared, local)) {
+      this.pushRef(envRef)
+      this.pushScriptProperty(property.type, values[property.name])
+      lua.lua_setfield(this.state, -2, S(property.name))
+      lua.lua_pop(this.state, 1)
+    }
+  }
+
+  private pushScriptProperty(type: ScriptPropertyType, value: string | boolean | number | undefined): void {
+    if (type === 'boolean') {
+      lua.lua_pushboolean(this.state, value === true)
+      return
+    }
+    if (type === 'integer' || type === 'float') {
+      const number = scriptPropertyNumber(value, type === 'integer')
+      if (type === 'integer') lua.lua_pushinteger(this.state, number)
+      else lua.lua_pushnumber(this.state, number)
+      return
+    }
+    if (type === 'bookPage') {
+      const ref = typeof value === 'string' ? decodeBookPage(value) : null
+      if (!ref?.book || !ref.page) {
+        lua.lua_pushstring(this.state, S(''))
+        return
+      }
+      lua.lua_newtable(this.state)
+      lua.lua_pushstring(this.state, S(ref.book))
+      lua.lua_setfield(this.state, -2, S('book'))
+      lua.lua_pushstring(this.state, S(ref.page))
+      lua.lua_setfield(this.state, -2, S('page'))
+      return
+    }
+    lua.lua_pushstring(this.state, S(typeof value === 'string' ? value : ''))
   }
 
   private setSelf(envRef: number, object: RuntimeObject): void {
