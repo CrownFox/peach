@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { assetDocument, createAsset, createButtonAsset, createButtonComponent, createMenuComponent, createPageViewerComponent, createPanelAsset, duplicateMenuComponent, parseAsset, parseMeta, planDuplicate } from './assets'
 import { intrinsicSize } from './intrinsicSize'
 import { resizeRect, snapTilemapSize, snapToGrid } from './resize'
-import { fillRegion, lineCells, mapSize, placedTile, pruneCells, tileAtPoint, tileSheet, tilemapCellSize } from './tiles'
+import { fillPicked, fillRegion, lineCells, mapSize, paintAssigned, placedTile, pruneCells, rectangleTiles, stampCells, tileAtPoint, tileRoll, tileSheet, tilemapCellSize } from './tiles'
 import { canvasColliders } from './collisions'
 import { placeInCanvas } from './zField'
 import { writeComponentProperty, type SceneOverrides } from './overrides'
@@ -1165,6 +1165,40 @@ describe('tiles', () => {
     )
     expect(mixed.find((cell) => cell.x === 0)?.tilesetId).toBe('water')
     expect(mixed.find((cell) => cell.x === 1)?.tilesetId).toBe('trees')
+  })
+
+  it('selects a rectangle, stamps it as a group, and picks a stable tile for random paint', () => {
+    expect(rectangleTiles(1, 0, 0, 1, 4, 3)).toEqual([
+      { tileX: 0, tileY: 0 },
+      { tileX: 1, tileY: 0 },
+      { tileX: 0, tileY: 1 },
+      { tileX: 1, tileY: 1 }
+    ])
+    const stamped = stampCells([], { x: 2, y: 1 }, [
+      { tileX: 0, tileY: 0 },
+      { tileX: 1, tileY: 0 },
+      { tileX: 1, tileY: 1 }
+    ], 'dungeon', 4, 3)
+    expect(stamped).toEqual([
+      { x: 2, y: 1, tilesetId: 'dungeon', tileX: 0, tileY: 0 },
+      { x: 3, y: 1, tilesetId: 'dungeon', tileX: 1, tileY: 0 },
+      { x: 3, y: 2, tilesetId: 'dungeon', tileX: 1, tileY: 1 }
+    ])
+    expect(stampCells([], { x: 3, y: 2 }, [{ tileX: 0, tileY: 0 }, { tileX: 1, tileY: 0 }], 'dungeon', 4, 3)).toEqual([
+      { x: 3, y: 2, tilesetId: 'dungeon', tileX: 0, tileY: 0 }
+    ])
+    expect(tileRoll(2, 4, 1, 3)).toBe(tileRoll(2, 4, 1, 3))
+    expect(tileRoll(2, 4, 1, 3)).toBeGreaterThanOrEqual(0)
+    expect(tileRoll(2, 4, 1, 3)).toBeLessThan(3)
+    const tiles = [{ tileX: 0, tileY: 0 }, { tileX: 4, tileY: 1 }]
+    const picked = fillPicked([], 2, 1, 0, 0, (x, y) => {
+      const tile = tiles[tileRoll(x, y, 5, tiles.length)] ?? tiles[0]
+      return { tilesetId: 'dungeon', tileX: tile.tileX, tileY: tile.tileY }
+    })
+    expect(picked).toHaveLength(2)
+    expect(picked.map((cell) => tileRoll(cell.x, cell.y, 5, 2))).toEqual(picked.map((cell) => (cell.tileX === 4 ? 1 : 0)))
+    const assigned = paintAssigned([], [{ x: 1, y: 0, tileX: 4, tileY: 1 }], 'dungeon')
+    expect(assigned).toEqual([{ x: 1, y: 0, tilesetId: 'dungeon', tileX: 4, tileY: 1 }])
   })
 })
 

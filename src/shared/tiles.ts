@@ -159,6 +159,95 @@ export function eraseCells(cells: readonly TileCell[], points: readonly { x: num
   return points.reduce((current, point) => eraseCell(current, point.x, point.y), [...cells])
 }
 
+export function rectangleTiles(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  cols: number,
+  rows: number
+): { tileX: number; tileY: number }[] {
+  const left = Math.max(0, Math.min(x0, x1, cols - 1))
+  const right = Math.min(cols - 1, Math.max(0, x0, x1))
+  const top = Math.max(0, Math.min(y0, y1, rows - 1))
+  const bottom = Math.min(rows - 1, Math.max(0, y0, y1))
+  if (right < left || bottom < top) return []
+  const tiles: { tileX: number; tileY: number }[] = []
+  for (let y = top; y <= bottom; y += 1) {
+    for (let x = left; x <= right; x += 1) tiles.push({ tileX: x, tileY: y })
+  }
+  return tiles
+}
+
+export function tileRoll(x: number, y: number, salt: number, count: number): number {
+  if (count <= 1) return 0
+  const mixed = (Math.imul(x | 0, 73856093) ^ Math.imul(y | 0, 19349663) ^ Math.imul(salt | 0, 83492791)) >>> 0
+  return mixed % count
+}
+
+export function stampCells(
+  cells: readonly TileCell[],
+  at: { x: number; y: number },
+  tiles: readonly { tileX: number; tileY: number }[],
+  tilesetId: string,
+  cols: number,
+  rows: number
+): TileCell[] {
+  if (tiles.length === 0) return [...cells]
+  const originX = Math.min(...tiles.map((tile) => tile.tileX))
+  const originY = Math.min(...tiles.map((tile) => tile.tileY))
+  return tiles.reduce((current, tile) => {
+    const x = at.x + tile.tileX - originX
+    const y = at.y + tile.tileY - originY
+    if (x < 0 || y < 0 || x >= cols || y >= rows) return current
+    return paintCell(current, x, y, tilesetId, tile.tileX, tile.tileY)
+  }, [...cells])
+}
+
+export function paintAssigned(
+  cells: readonly TileCell[],
+  points: readonly { x: number; y: number; tileX: number; tileY: number }[],
+  tilesetId: string
+): TileCell[] {
+  return points.reduce((current, point) => paintCell(current, point.x, point.y, tilesetId, point.tileX, point.tileY), [...cells])
+}
+
+export function fillPicked(
+  cells: readonly TileCell[],
+  cols: number,
+  rows: number,
+  x: number,
+  y: number,
+  pick: (x: number, y: number) => { tilesetId: string; tileX: number; tileY: number }
+): TileCell[] {
+  if (x < 0 || y < 0 || x >= cols || y >= rows) return [...cells]
+  const targetKey = tileKey(readCell(cells, x, y))
+  const kept = new Map<string, TileCell>()
+  for (const cell of cells) {
+    if (cell.x >= 0 && cell.y >= 0 && cell.x < cols && cell.y < rows) kept.set(`${cell.x},${cell.y}`, { ...cell })
+  }
+  const seen = new Set<string>()
+  const stack = [{ x, y }]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (!current) break
+    const key = `${current.x},${current.y}`
+    if (seen.has(key)) continue
+    if (current.x < 0 || current.y < 0 || current.x >= cols || current.y >= rows) continue
+    if (tileKey(kept.get(key)) !== targetKey) continue
+    seen.add(key)
+    const chosen = pick(current.x, current.y)
+    kept.set(key, { x: current.x, y: current.y, tilesetId: chosen.tilesetId, tileX: chosen.tileX, tileY: chosen.tileY })
+    stack.push(
+      { x: current.x + 1, y: current.y },
+      { x: current.x - 1, y: current.y },
+      { x: current.x, y: current.y + 1 },
+      { x: current.x, y: current.y - 1 }
+    )
+  }
+  return [...kept.values()]
+}
+
 export function lineCells(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] {
   const points: { x: number; y: number }[] = []
   let x = x0

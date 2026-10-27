@@ -114,6 +114,7 @@ export class LuaHost {
   private readonly held = new Set<string>()
   private readonly updateFailed = new Set<PlayFrame>()
   private readonly compositeFailed = new Map<PlayFrame, Set<string>>()
+  private readonly presented = new Map<PlayFrame, Set<string>>()
   private typing = false
   private displayScale = 1
   private readonly reveals = new Map<PlayFrame, Map<string, TextReveal>>()
@@ -150,6 +151,7 @@ export class LuaHost {
     this.dropKeys(frame)
     this.updateFailed.delete(frame)
     this.compositeFailed.delete(frame)
+    this.presented.delete(frame)
     this.reveals.delete(frame)
     const compiled = this.compiled.get(frame)
     this.modalFrames.delete(frame)
@@ -228,14 +230,20 @@ export class LuaHost {
       this.adoptPersistent(frame, menu)
     }
     this.refreshProperties(frame)
-    if (!runOnLoad) return
+    if (!runOnLoad) {
+      this.runSceneShows(frame)
+      return
+    }
     this.loadPages(frame)
     const compiled = this.compiled.get(frame)
     if (!compiled) return
     this.runSceneLoads(frame)
+    this.runSceneShows(frame)
     this.runCompositeLoads(frame, menu.components, '', [])
+    this.runCompositeShows(frame, menu.components, '', [])
     this.setSelf(compiled.menuRef, { kind: 'menu', frame })
     this.callHook(compiled.menuRef, 'onLoad', `${menu.name} onLoad`)
+    this.runSceneShows(frame)
   }
 
   private compile(frame: PlayFrame, menu: MenuAsset, stamp: string): void {
@@ -294,6 +302,49 @@ export class LuaHost {
       this.setSelf(env, { kind: 'composite', frame, instanceId: id })
       this.callHook(env, 'onLoad', `${asset.name} onLoad`)
     }
+  }
+
+  private runCompositeShows(frame: PlayFrame, components: MenuComponent[], parent: string, stack: string[]): void {
+    const compiled = this.compiled.get(frame)
+    if (!compiled) return
+    for (const component of directPieces(components)) {
+      if (component.type !== 'composite' || !component.compositeId || stack.includes(component.compositeId)) continue
+      const asset = compositeById(this.hooks.assets(), component.compositeId)
+      if (!asset) continue
+      const id = parent ? `${parent}/${component.id}` : component.id
+      this.runCompositeShows(frame, asset.components, id, [...stack, asset.id])
+      if (this.presented.get(frame)?.has(id)) continue
+      const env = compiled.composites.get(id)
+      if (!env) continue
+      this.claimShow(frame, id)
+      this.setSelf(env, { kind: 'composite', frame, instanceId: id })
+      this.callHook(env, 'onShow', `${asset.name} onShow`)
+    }
+  }
+
+  private runSceneShows(frame: PlayFrame): void {
+    const compiled = this.compiled.get(frame)
+    if (!compiled) return
+    for (const [sceneId, runtime] of compiled.scenes) {
+      const mark = `scene:${sceneId}`
+      if (this.presented.get(frame)?.has(mark)) continue
+      if (!this.sceneShown(frame, sceneId)) continue
+      const scene = sceneById(this.hooks.assets(), sceneId)
+      if (!scene) continue
+      this.claimShow(frame, mark)
+      this.runCompositeShows(frame, scene.components, mark, [scene.id])
+      this.setSelf(runtime.envRef, { kind: 'scene', frame, sceneId })
+      this.callHook(runtime.envRef, 'onShow', `${scene.name} onShow`)
+    }
+  }
+
+  private claimShow(frame: PlayFrame, id: string): void {
+    let shown = this.presented.get(frame)
+    if (!shown) {
+      shown = new Set()
+      this.presented.set(frame, shown)
+    }
+    shown.add(id)
   }
 
   private runSources(envRef: number, shared: string, inline: string, label: string): void {
@@ -447,6 +498,7 @@ export class LuaHost {
     const menu = this.menu(frame.menuId)
     if (menu) this.runCompositeUpdates(frame, menu.components, '', [], dt)
     this.runMenuUpdate(frame, dt)
+    this.runSceneShows(frame)
     this.runSceneUpdates(frame, dt)
   }
 

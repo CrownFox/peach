@@ -1040,6 +1040,183 @@ describe('play session', () => {
     expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
   })
 
+  it('runs onShow when a persistent scene is shown on a new menu', () => {
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    town.persistent = true
+    town.script = `function onLoad()
+      print("load")
+    end
+    function onShow()
+      print("show")
+      game.registerKey(BTN_A, "down", function()
+        print("key")
+      end)
+    end`
+    town.components = [button('hero', 'hero')]
+    const camera = createMenuComponent('sceneViewer', [])
+    camera.id = 'camera'
+    camera.handle = 'camera'
+    if (camera.type === 'sceneViewer') camera.sceneId = 'town'
+    const main = menu('main', 'Main Menu.menu.json', '', [camera])
+    const next = menu('next', 'Next.menu.json', '', [camera])
+    const dialog = menu('dialog', 'Dialog.menu.json', '', [camera, button('close', 'close', `function onInteract()
+      game.closeModal(game.currentModal)
+    end`)])
+    const quiet = menu('quiet', 'Quiet.menu.json', '', [button('close', 'close', `function onInteract()
+      game.closeModal(game.currentModal)
+    end`)])
+    const opener = button('open', 'open', `function onInteract()
+      game.openModal("Dialog")
+    end`)
+    const quietOpen = button('quiet', 'quiet', `function onInteract()
+      game.openModal("Quiet")
+    end`)
+    main.components = [camera, opener, quietOpen]
+    const session = start([main, next, dialog, quiet, town, plate, plateButton], 'main')
+    const text = (value: string): number => session.logs.filter((entry) => entry.text === value).length
+    expect(text('load')).toBe(1)
+    expect(text('show')).toBe(1)
+    expect(session.pressKey('KeyA', 'down')).toBe(true)
+    expect(text('key')).toBe(1)
+    session.navigate('next')
+    expect(text('load')).toBe(1)
+    expect(text('show')).toBe(2)
+    expect(session.pressKey('KeyA', 'down')).toBe(true)
+    expect(text('key')).toBe(2)
+    session.back()
+    expect(text('show')).toBe(2)
+    expect(session.pressKey('KeyA', 'down')).toBe(true)
+    expect(text('key')).toBe(3)
+    session.activate('quiet')
+    expect(text('show')).toBe(2)
+    expect(session.pressKey('KeyA', 'down')).toBe(false)
+    session.activate('close')
+    expect(text('show')).toBe(2)
+    expect(session.pressKey('KeyA', 'down')).toBe(true)
+    session.activate('open')
+    expect(text('show')).toBe(3)
+    expect(session.pressKey('KeyA', 'down')).toBe(true)
+    expect(text('key')).toBe(5)
+    session.activate('close')
+    expect(text('show')).toBe(3)
+    expect(session.pressKey('KeyA', 'down')).toBe(true)
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('waits to run onShow until a viewer is visible and does not repeat it on the same menu', () => {
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    town.script = `function onShow()
+      print("show")
+    end`
+    town.components = [button('hero', 'hero')]
+    const camera = createMenuComponent('sceneViewer', [])
+    camera.id = 'camera'
+    camera.handle = 'camera'
+    camera.visible = false
+    if (camera.type === 'sceneViewer') camera.sceneId = 'town'
+    const show = button('show', 'show', `function onInteract()
+      game.currentMenu.camera.visible = true
+    end`)
+    const hide = button('hide', 'hide', `function onInteract()
+      game.currentMenu.camera.visible = false
+    end`)
+    const main = menu('main', 'Main Menu.menu.json', '', [camera, show, hide])
+    const session = start([main, town, plate, plateButton], 'main')
+    const shows = (): number => session.logs.filter((entry) => entry.text === 'show').length
+    session.tick(16)
+    expect(shows()).toBe(0)
+    session.activate('show')
+    session.tick(16)
+    expect(shows()).toBe(1)
+    session.activate('hide')
+    session.tick(16)
+    session.activate('show')
+    session.tick(16)
+    expect(shows()).toBe(1)
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('runs composite onShow after onLoad and skips it when going back', () => {
+    const label = createMenuComponent('label', [])
+    label.id = 'label'
+    label.handle = 'label'
+    const badge = createAsset('composite', 'Badge', 'Badge.composite.json', 'badge') as CompositeAsset
+    badge.script = `function onLoad()
+      print("load")
+    end
+    function onShow()
+      print("show")
+    end`
+    badge.components = [label]
+    const slot = createMenuComponent('composite', [])
+    slot.id = 'badge'
+    slot.handle = 'badge'
+    if (slot.type === 'composite') slot.compositeId = 'badge'
+    const town = menu('town', 'Town.menu.json', '', [])
+    const main = menu(
+      'main',
+      'Main.menu.json',
+      '',
+      [slot, button('play', 'play', `function onInteract() game.openMenu("Town") end`)]
+    )
+    const session = start([main, town, badge, plate, plateButton], 'main')
+    const text = (value: string): number => session.logs.filter((entry) => entry.text === value).length
+    expect(text('load')).toBe(1)
+    expect(text('show')).toBe(1)
+    session.activate('play')
+    session.back()
+    expect(text('load')).toBe(1)
+    expect(text('show')).toBe(1)
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('runs a composite inside a persistent scene onShow on the next menu', () => {
+    const label = createMenuComponent('label', [])
+    label.id = 'label'
+    label.handle = 'label'
+    const badge = createAsset('composite', 'Badge', 'Badge.composite.json', 'badge') as CompositeAsset
+    badge.script = `function onLoad()
+      print("cload")
+    end
+    function onShow()
+      print("cshow")
+    end`
+    badge.components = [label]
+    const slot = createMenuComponent('composite', [])
+    slot.id = 'badge'
+    slot.handle = 'badge'
+    if (slot.type === 'composite') slot.compositeId = 'badge'
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    town.persistent = true
+    town.script = `function onLoad()
+      print("load")
+    end
+    function onShow()
+      print("show")
+    end`
+    town.components = [slot]
+    const camera = createMenuComponent('sceneViewer', [])
+    camera.id = 'camera'
+    camera.handle = 'camera'
+    if (camera.type === 'sceneViewer') camera.sceneId = 'town'
+    const main = menu('main', 'Main Menu.menu.json', '', [camera])
+    const next = menu('next', 'Next.menu.json', '', [camera])
+    const session = start([main, next, town, badge, plate, plateButton], 'main')
+    const text = (value: string): number => session.logs.filter((entry) => entry.text === value).length
+    expect(text('cload')).toBe(1)
+    expect(text('load')).toBe(1)
+    expect(text('cshow')).toBe(1)
+    expect(text('show')).toBe(1)
+    const order = session.logs.map((entry) => entry.text)
+    expect(order.indexOf('cshow')).toBeLessThan(order.indexOf('show'))
+    session.navigate('next')
+    expect(text('cload')).toBe(1)
+    expect(text('load')).toBe(1)
+    expect(text('cshow')).toBe(2)
+    expect(text('show')).toBe(2)
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
   it('starts a scene over when the next menu shows it', () => {
     const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
     town.script = `local n = 0

@@ -278,7 +278,7 @@ input, textarea { user-select: text; }
 .tilemap-tools { display: flex; flex-direction: column; gap: 6px; flex: 0 0 280px; }
 .tilemap-tool-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .tilemap-swatches { display: grid; gap: 2px; overflow: auto; max-height: 220px; }
-.tilemap-swatch { width: 32px; height: 32px; padding: 0; border: 1px solid transparent; background-color: #1a120c; image-rendering: pixelated; background-repeat: no-repeat; }
+.tilemap-swatch { width: 32px; height: 32px; padding: 0; border: 1px solid transparent; background-color: #1a120c; image-rendering: pixelated; background-repeat: no-repeat; touch-action: none; }
 .tilemap-swatch.selected { border-color: #fff; }
 .tile-choice { display: flex; align-items: center; gap: 8px; }
 .tile-preview { width: 48px; height: 48px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background-color: #1a120c; background-repeat: no-repeat; image-rendering: pixelated; }

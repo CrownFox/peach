@@ -4,7 +4,7 @@ import { minimumCanvasSize, rectPercent } from '@shared/assets'
 import { centerContent } from '@shared/canvasView'
 import { storedFromVisual, visualRect } from '@shared/composites'
 import { resizeRect, snapTilemapSize, snapToGrid } from '@shared/resize'
-import { eraseCells, fillRegion, fitTileSpan, imageForTileset, lineCells, mapSize, mergeAt, paintCells, placedTile, pruneCells, tileGrid, tilemapCellSize, tilesetById } from '@shared/tiles'
+import { eraseCells, fillPicked, fillRegion, fitTileSpan, imageForTileset, lineCells, mapSize, mergeAt, paintAssigned, paintCells, placedTile, pruneCells, rectangleTiles, stampCells, tileGrid, tilemapCellSize, tileRoll, tilesetById } from '@shared/tiles'
 import { buildScene } from '@shared/scene'
 import { findComponent, frontOrder } from '@shared/zField'
 import { DEFAULT_MENU_HEIGHT, DEFAULT_MENU_WIDTH, isCanvas, type MenuComponent } from '@shared/types'
@@ -67,7 +67,11 @@ const palette = computed(() => {
 const handles = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 const tool = ref<'paint' | 'line' | 'bucket'>('paint')
 const erasing = ref(false)
-const brush = ref<{ tilesetId: string; tileX: number; tileY: number } | null>(null)
+const randomPaint = ref(false)
+const selection = ref<{ tileX: number; tileY: number }[]>([])
+const anchor = ref<{ tileX: number; tileY: number } | null>(null)
+const draft = ref<{ tileX: number; tileY: number }[] | null>(null)
+const paintSalt = ref(1)
 const paletteId = ref<string | null>(null)
 const hoverCell = ref<{ x: number; y: number } | null>(null)
 const stroke = ref<{ x: number; y: number }[] | null>(null)
@@ -121,24 +125,26 @@ const ghosts = computed(() => {
   const sheet = paintTileset.value
   const picture = paintImage.value
   const cells = stroke.value ?? (hoverCell.value ? [hoverCell.value] : [])
-  if (!grid || (!erasing.value && !brush.value)) return []
-  return cells.flatMap((cell) => {
-    const key = `${cell.x},${cell.y}`
-    if (erasing.value || !brush.value || !sheet || !picture?.file) {
+  const tiles = selection.value
+  if (!grid || (!erasing.value && tiles.length === 0)) return []
+  const marks = ghostMarks(cells, tiles)
+  return marks.flatMap((mark) => {
+    const key = `${mark.x},${mark.y}`
+    if (mark.erase || !sheet || !picture?.file) {
       return [{
         key,
         erase: true,
         style: {
-          left: `${grid.x + cell.x * grid.cellW}px`,
-          top: `${grid.y + cell.y * grid.cellH}px`,
+          left: `${grid.x + mark.x * grid.cellW}px`,
+          top: `${grid.y + mark.y * grid.cellH}px`,
           width: `${grid.cellW}px`,
           height: `${grid.cellH}px`
         }
       }]
     }
-    const draw = placedTile(sheet, picture, brush.value.tileX, brush.value.tileY, {
-      x: grid.x + cell.x * grid.cellW,
-      y: grid.y + cell.y * grid.cellH,
+    const draw = placedTile(sheet, picture, mark.tileX, mark.tileY, {
+      x: grid.x + mark.x * grid.cellW,
+      y: grid.y + mark.y * grid.cellH,
       width: grid.cellW,
       height: grid.cellH
     })
@@ -194,7 +200,9 @@ watch(
   () => editing.value?.id ?? null,
   () => {
     const map = editing.value
-    brush.value = null
+    selection.value = []
+    anchor.value = null
+    draft.value = null
     paletteId.value = map?.tilesetId ?? map?.cells.find((cell) => cell.tilesetId)?.tilesetId ?? null
   },
   { immediate: true }
@@ -243,13 +251,88 @@ function swatchStyle(x: number, y: number): Record<string, string> {
 
 function choosePalette(id: string | null): void {
   paletteId.value = id
-  brush.value = null
+  selection.value = []
+  anchor.value = null
+  draft.value = null
 }
 
-function chooseSwatch(x: number, y: number): void {
-  if (!paletteId.value) return
+function tileChosen(x: number, y: number): boolean {
+  return (draft.value ?? selection.value).some((tile) => tile.tileX === x && tile.tileY === y)
+}
+
+function toggleTile(x: number, y: number): void {
+  const index = selection.value.findIndex((tile) => tile.tileX === x && tile.tileY === y)
+  if (index >= 0) {
+    selection.value = selection.value.filter((_, item) => item !== index)
+    if (anchor.value?.tileX === x && anchor.value.tileY === y) anchor.value = selection.value[0] ?? null
+    return
+  }
+  selection.value = [...selection.value, { tileX: x, tileY: y }]
+  anchor.value = { tileX: x, tileY: y }
+}
+
+function swatchAt(event: PointerEvent): { tileX: number; tileY: number } | null {
+  const hit = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-tile-x]')
+  if (!hit) return null
+  const tileX = Number(hit.dataset.tileX)
+  const tileY = Number(hit.dataset.tileY)
+  if (!Number.isInteger(tileX) || !Number.isInteger(tileY)) return null
+  return { tileX, tileY }
+}
+
+function onSwatchDown(event: PointerEvent, x: number, y: number): void {
+  if (event.button !== 0 || !paletteId.value) return
+  event.preventDefault()
   erasing.value = false
-  brush.value = { tilesetId: paletteId.value, tileX: x, tileY: y }
+  if (event.shiftKey) {
+    toggleTile(x, y)
+    return
+  }
+  const start = { tileX: x, tileY: y }
+  let end = start
+  const cols = paintGrid.value.cols
+  const rows = paintGrid.value.rows
+  draft.value = rectangleTiles(start.tileX, start.tileY, end.tileX, end.tileY, cols, rows)
+  const move = (ev: PointerEvent): void => {
+    end = swatchAt(ev) ?? end
+    draft.value = rectangleTiles(start.tileX, start.tileY, end.tileX, end.tileY, cols, rows)
+  }
+  const up = (): void => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', up)
+    selection.value = rectangleTiles(start.tileX, start.tileY, end.tileX, end.tileY, cols, rows)
+    anchor.value = { tileX: start.tileX, tileY: start.tileY }
+    draft.value = null
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', up)
+}
+
+function ghostMarks(
+  cells: { x: number; y: number }[],
+  tiles: { tileX: number; tileY: number }[]
+): { x: number; y: number; tileX: number; tileY: number; erase: boolean }[] {
+  if (erasing.value || tiles.length === 0) return cells.map((cell) => ({ ...cell, tileX: 0, tileY: 0, erase: true }))
+  if (randomPaint.value) {
+    return cells.map((cell) => {
+      const tile = tiles[tileRoll(cell.x, cell.y, paintSalt.value, tiles.length)] ?? tiles[0]
+      return { x: cell.x, y: cell.y, tileX: tile?.tileX ?? 0, tileY: tile?.tileY ?? 0, erase: !tile }
+    })
+  }
+  if (tool.value === 'paint' && tiles.length > 1) {
+    const originX = Math.min(...tiles.map((tile) => tile.tileX))
+    const originY = Math.min(...tiles.map((tile) => tile.tileY))
+    return cells.flatMap((cell) => tiles.map((tile) => ({
+      x: cell.x + tile.tileX - originX,
+      y: cell.y + tile.tileY - originY,
+      tileX: tile.tileX,
+      tileY: tile.tileY,
+      erase: false
+    })))
+  }
+  const tile = anchor.value ?? tiles[0]
+  if (!tile) return []
+  return cells.map((cell) => ({ x: cell.x, y: cell.y, tileX: tile.tileX, tileY: tile.tileY, erase: false }))
 }
 
 function pointerCell(event: PointerEvent): { x: number; y: number } | null {
@@ -276,22 +359,55 @@ function writeCells(cells: ReturnType<typeof paintCells>): void {
 
 function applyPoints(points: { x: number; y: number }[]): void {
   const map = editing.value
+  const tilesetId = paletteId.value
+  const tiles = selection.value
   if (!map || points.length === 0) return
   if (erasing.value) {
     writeCells(eraseCells(map.cells, points))
     return
   }
-  if (!brush.value) return
-  writeCells(paintCells(map.cells, points, brush.value.tilesetId, brush.value.tileX, brush.value.tileY))
+  if (!tilesetId || tiles.length === 0) return
+  if (randomPaint.value) {
+    writeCells(paintAssigned(map.cells, points.map((point) => {
+      const tile = tiles[tileRoll(point.x, point.y, paintSalt.value, tiles.length)] ?? tiles[0]
+      return { x: point.x, y: point.y, tileX: tile.tileX, tileY: tile.tileY }
+    }), tilesetId))
+    return
+  }
+  if (tool.value === 'paint' && tiles.length > 1) {
+    const grid = metrics.value
+    if (!grid) return
+    writeCells(points.reduce((cells, point) => stampCells(cells, point, tiles, tilesetId, grid.cols, grid.rows), map.cells))
+    return
+  }
+  const tile = anchor.value ?? tiles[0]
+  if (!tile) return
+  writeCells(paintCells(map.cells, points, tilesetId, tile.tileX, tile.tileY))
 }
 
 function beginStroke(cell: { x: number; y: number }): void {
   const grid = metrics.value
   const map = editing.value
   if (!grid || !map) return
+  paintSalt.value += 1
   if (tool.value === 'bucket') {
-    if (!erasing.value && !brush.value) return
-    writeCells(fillRegion(map.cells, grid.cols, grid.rows, cell.x, cell.y, erasing.value ? null : brush.value))
+    const tilesetId = paletteId.value
+    const tiles = selection.value
+    if (erasing.value) {
+      writeCells(fillRegion(map.cells, grid.cols, grid.rows, cell.x, cell.y, null))
+      return
+    }
+    if (!tilesetId || tiles.length === 0) return
+    if (randomPaint.value) {
+      writeCells(fillPicked(map.cells, grid.cols, grid.rows, cell.x, cell.y, (x, y) => {
+        const tile = tiles[tileRoll(x, y, paintSalt.value, tiles.length)] ?? tiles[0]
+        return { tilesetId, tileX: tile.tileX, tileY: tile.tileY }
+      }))
+      return
+    }
+    const tile = anchor.value ?? tiles[0]
+    if (!tile) return
+    writeCells(fillRegion(map.cells, grid.cols, grid.rows, cell.x, cell.y, { tilesetId, tileX: tile.tileX, tileY: tile.tileY }))
     return
   }
   if (tool.value === 'line') {
@@ -645,11 +761,12 @@ onBeforeUnmount(() => {
           <button class="btn" type="button" :class="{ selected: tool === 'line' }" @click="tool = 'line'">Line</button>
           <button class="btn" type="button" :class="{ selected: tool === 'bucket' }" @click="tool = 'bucket'">Bucket</button>
           <button class="btn" type="button" :class="{ selected: erasing }" @click="erasing = !erasing">Eraser</button>
+          <label class="check"><input v-model="randomPaint" type="checkbox" /><span>Random</span></label>
         </div>
         <label class="check"><input v-model="showBelow" type="checkbox" /><span>Show below</span></label>
         <label class="check"><input v-model="showAbove" type="checkbox" /><span>Show above</span></label>
         <button class="btn" type="button" @click="finishTiles">Done</button>
-        <p class="tree-hint">Painting happens on the canvas. Below and above are the pieces drawn under or over this map.</p>
+        <p class="tree-hint">Drag a rectangle of tiles, or Shift-click to select and clear tiles. Random paints one of those tiles on each cell. Line and Bucket do that too. With Random off, Paint places the selection as one group, and Line and Bucket paint the tile the selection started on.</p>
       </div>
       <div class="tilemap-palette">
         <AssetSelect label="Tileset" type="tileset" clearable :model-value="paletteId" @update:model-value="choosePalette" />
@@ -661,9 +778,11 @@ onBeforeUnmount(() => {
           :key="`${cell.x},${cell.y}`"
           type="button"
           class="tilemap-swatch"
-          :class="{ selected: !erasing && brush?.tilesetId === paletteId && brush?.tileX === cell.x && brush?.tileY === cell.y }"
+          :class="{ selected: !erasing && tileChosen(cell.x, cell.y) }"
+          :data-tile-x="cell.x"
+          :data-tile-y="cell.y"
           :style="swatchStyle(cell.x, cell.y)"
-          @click="chooseSwatch(cell.x, cell.y)"
+          @pointerdown="onSwatchDown($event, cell.x, cell.y)"
         ></button>
       </div>
       <p v-else class="tree-hint">Choose a tileset, then a tile. Each cell keeps the tileset it was painted from.</p>

@@ -77,7 +77,7 @@ export function createCompositeAsset(id: string, name: string, relativePath: str
     gridSize: 16,
     snapToGrid: false,
     scriptId: null,
-    script: 'function onLoad()\nend\n\nfunction onUpdate(dt)\nend\n',
+    script: 'function onLoad()\nend\n\nfunction onShow()\nend\n\nfunction onUpdate(dt)\nend\n',
     components: []
   }
 }
@@ -93,7 +93,7 @@ export function createSceneAsset(id: string, name: string, relativePath: string)
     gridSize: 16,
     snapToGrid: false,
     scriptId: null,
-    script: 'function onLoad()\nend\n\nfunction onUpdate(dt)\nend\n',
+    script: 'function onLoad()\nend\n\nfunction onShow()\nend\n\nfunction onUpdate(dt)\nend\n',
     components: [],
     persistent: false
   }

@@ -122,9 +122,10 @@ const libraries: Record<string, Suggestion[]> = {
 
 const globals: Suggestion[] = [
   { label: 'game', insertText: 'game', kind: 'field', detail: 'The game API' },
-  { label: 'self', insertText: 'self', kind: 'field', detail: 'The menu, scene, or composite during onLoad and onUpdate, or this component in onChange and onInteract' },
+  { label: 'self', insertText: 'self', kind: 'field', detail: 'The menu during onLoad and onUpdate, the scene or composite during onLoad, onShow, and onUpdate, or this component in onChange and onInteract' },
   { label: 'print', insertText: 'print(', kind: 'function', detail: 'Write to the game console' },
   { label: 'onLoad', insertText: 'onLoad', kind: 'function', detail: 'Called when a menu, scene, or composite opens' },
+  { label: 'onShow', insertText: 'onShow', kind: 'function', detail: 'Called when a scene or composite is shown on this visit' },
   { label: 'onUpdate', insertText: 'onUpdate', kind: 'function', detail: 'Called every frame while a menu, scene, or composite is on screen' },
   { label: 'onInteract', insertText: 'onInteract', kind: 'function', detail: 'Called when a button or image is clicked' },
   { label: 'onChange', insertText: 'onChange', kind: 'function', detail: 'Called when the player edits an input' },

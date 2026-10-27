@@ -54,7 +54,7 @@ export function componentScriptTemplate(type: MenuComponent['type']): string {
   if (type === 'pageViewer') {
     return onChangeScript('-- onChange runs when the player edits a text field or dropdown on the page.\n-- self:loadPage(book, "Chapter/Page")\n-- game.loadPage(self, bookPage)\n-- self:get("field")\n-- self:getInput("key")\n-- self.book    a book path\n-- self.page    a chapter/page path\n-- self.panel   a panel path\n-- self.progressive   true streams the page in\n-- self.scrollable   true scrolls. false hides the rest of the page\n-- self.rate   characters per second\n-- self.finished   true when the stream has finished\n-- self:start()  self:stop()  self:resume()  self:finish()')
   }
-  if (type === 'composite') return `${colorNote}-- A placed composite uses the onLoad and onUpdate on its composite asset.\n`
+  if (type === 'composite') return `${colorNote}-- A placed composite uses the onLoad, onShow, and onUpdate on its composite asset.\n`
   if (type === 'tile') {
     return `${colorNote}-- self:setTile("tiles/Dungeon", 0, 0)\n-- self.tileset   a tileset path\n-- self.tileX   column in the tileset. 0 is the left column\n-- self.tileY   row in the tileset. 0 is the top row\n`
   }
