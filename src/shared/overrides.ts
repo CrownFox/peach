@@ -2,7 +2,8 @@ import { resolvePiece } from './composites'
 import { componentColor } from './color'
 import { assetLocation } from './paths'
 import { findAssetByLocation } from './refs'
-import type { Asset, ButtonAsset, MenuAsset, MenuComponent, ToggleGroupComponent } from './types'
+import { viewerSize } from './sceneCamera'
+import type { Asset, ButtonAsset, MenuAsset, MenuComponent, TileCell, ToggleGroupComponent } from './types'
 
 export type ScriptValue = string | number | boolean | string[] | null
 
@@ -24,6 +25,17 @@ export type ComponentOverride = {
   pageInputs?: Record<string, string>
   tint?: string
   visible?: boolean
+  x?: number
+  y?: number
+  viewX?: number
+  viewY?: number
+  scale?: number
+  sceneRef?: string | null
+  tilesetRef?: string | null
+  tileX?: number
+  tileY?: number
+  cells?: TileCell[]
+  tags?: string[]
   progressive?: boolean
   rate?: number
   scrollable?: boolean
@@ -75,13 +87,17 @@ export function readComponentProperty(
   component: MenuComponent,
   override: ComponentOverride | undefined,
   assets: Iterable<Asset>,
-  key: string
+  key: string,
+  displayScale = 1
 ): ScriptValue {
   if ((component.type === 'button' || component.type === 'label' || component.type === 'toggle') && key === 'text') {
     return override?.text ?? component.text
   }
-  if (component.type === 'button' && key === 'enabled') return override?.enabled ?? component.enabled
-  if (component.type === 'composite' && key === 'enabled') return override?.enabled ?? component.enabled
+  if ((component.type === 'button' || component.type === 'composite' || component.type === 'collider') && key === 'enabled') {
+    return override?.enabled ?? component.enabled
+  }
+  if (component.type === 'collider' && key === 'tags') return cleanTags(override?.tags ?? component.tags)
+  if (component.type === 'collider' && key === 'shape') return component.shape
   if (component.type === 'image' && key === 'image') {
     if (override && 'imageRef' in override) return override.imageRef ?? null
     return locationOf(assets, component.imageId)
@@ -118,6 +134,26 @@ export function readComponentProperty(
   if (key === 'value') return readControlValue(component, override)
   if (key === 'color') return override?.tint ?? component.tint
   if (key === 'visible') return override?.visible ?? component.visible
+  if (key === 'x') return typeof override?.x === 'number' ? override.x : component.x
+  if (key === 'y') return typeof override?.y === 'number' ? override.y : component.y
+  if (component.type === 'sceneViewer' && key === 'viewX') return typeof override?.viewX === 'number' ? override.viewX : component.viewX
+  if (component.type === 'sceneViewer' && key === 'viewY') return typeof override?.viewY === 'number' ? override.viewY : component.viewY
+  if (component.type === 'sceneViewer' && key === 'scale') {
+    return typeof override?.scale === 'number' ? override.scale : component.scale
+  }
+  if (component.type === 'sceneViewer' && (key === 'width' || key === 'height')) {
+    return viewerSize(component, override, displayScale)[key]
+  }
+  if (component.type === 'sceneViewer' && key === 'scene') {
+    if (override && 'sceneRef' in override) return override.sceneRef ?? null
+    return locationOf(assets, component.sceneId)
+  }
+  if ((component.type === 'tile' || component.type === 'tilemap') && key === 'tileset') {
+    if (override && 'tilesetRef' in override) return override.tilesetRef ?? null
+    return locationOf(assets, component.tilesetId)
+  }
+  if (component.type === 'tile' && key === 'tileX') return typeof override?.tileX === 'number' ? override.tileX : component.tileX
+  if (component.type === 'tile' && key === 'tileY') return typeof override?.tileY === 'number' ? override.tileY : component.tileY
   return null
 }
 
@@ -184,14 +220,17 @@ function assignProperty(
     current.text = value
     return
   }
-  if (component.type === 'button' && key === 'enabled') {
+  if ((component.type === 'button' || component.type === 'composite' || component.type === 'collider') && key === 'enabled') {
     if (typeof value !== 'boolean') throw new Error('enabled expects true or false.')
     current.enabled = value
     return
   }
-  if (component.type === 'composite' && key === 'enabled') {
-    if (typeof value !== 'boolean') throw new Error('enabled expects true or false.')
-    current.enabled = value
+  if (component.type === 'collider' && key === 'tags') {
+    if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) throw new Error('tags expects a list of text.')
+    current.tags = value.flatMap((item) => {
+      const trimmed = item.trim()
+      return trimmed ? [trimmed] : []
+    })
     return
   }
   if (component.type === 'image' && key === 'image') {
@@ -259,6 +298,25 @@ function assignProperty(
     current.visible = value
     return
   }
+  if (key === 'x' || key === 'y') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${key} expects a number.`)
+    current[key] = value
+    return
+  }
+  if (component.type === 'sceneViewer' && (key === 'viewX' || key === 'viewY')) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${key} expects a number.`)
+    current[key] = value
+    return
+  }
+  if (component.type === 'sceneViewer' && key === 'scale') {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) throw new Error('scale expects a whole number, 1 or more.')
+    current.scale = value
+    return
+  }
+  if (component.type === 'sceneViewer' && key === 'scene') {
+    current.sceneRef = expectAsset(assets, value, 'scene')
+    return
+  }
   throw new Error(`Cannot set ${key} on this ${component.type}.`)
 }
 
@@ -309,12 +367,16 @@ function fieldKey(component: MenuComponent, key: string): keyof ComponentOverrid
   if (component.type === 'pageViewer' && key === 'scrollable') return 'scrollable'
   if (component.type === 'pageViewer' && key === 'rate') return 'rate'
   if (key === 'text' && (component.type === 'button' || component.type === 'label' || component.type === 'toggle')) return 'text'
-  if (key === 'enabled' && (component.type === 'button' || component.type === 'composite')) return 'enabled'
+  if (key === 'enabled' && (component.type === 'button' || component.type === 'composite' || component.type === 'collider')) return 'enabled'
+  if (component.type === 'collider' && key === 'tags') return 'tags'
   if (isImageField(key) && component.type === 'button') return key
   if (key === 'value' && acceptsValue(component)) return 'value'
   if ((key === 'min' || key === 'max') && (component.type === 'slider' || component.type === 'meter')) return key
   if (key === 'color') return 'tint'
   if (key === 'visible') return 'visible'
+  if (key === 'x' || key === 'y') return key
+  if (component.type === 'sceneViewer' && (key === 'viewX' || key === 'viewY' || key === 'scale')) return key
+  if (component.type === 'sceneViewer' && key === 'scene') return 'sceneRef'
   throw new Error(`Cannot set ${key} on this ${component.type}.`)
 }
 
@@ -330,15 +392,22 @@ function acceptsValue(component: MenuComponent): boolean {
   )
 }
 
-function usesPanel(component: MenuComponent): component is Exclude<MenuComponent, { type: 'image' | 'button' | 'composite' }> {
-  return component.type !== 'image' && component.type !== 'button' && component.type !== 'composite'
+function usesPanel(component: MenuComponent): component is Exclude<MenuComponent, { type: 'image' | 'button' | 'composite' | 'sceneViewer' | 'tile' | 'tilemap' | 'collider' }> {
+  return component.type !== 'image' && component.type !== 'button' && component.type !== 'composite' && component.type !== 'sceneViewer' && component.type !== 'tile' && component.type !== 'tilemap' && component.type !== 'collider'
+}
+
+function cleanTags(tags: readonly string[]): string[] {
+  return tags.flatMap((tag) => {
+    const trimmed = tag.trim()
+    return trimmed ? [trimmed] : []
+  })
 }
 
 function isImageField(key: string): key is ImageField {
   return key === 'defaultImage' || key === 'pressedImage' || key === 'disabledImage'
 }
 
-function expectAsset(assets: Iterable<Asset>, value: Exclude<ScriptValue, null>, type: 'image' | 'button' | 'panel' | 'book'): string {
+function expectAsset(assets: Iterable<Asset>, value: Exclude<ScriptValue, null>, type: 'image' | 'button' | 'panel' | 'book' | 'scene'): string {
   if (typeof value !== 'string' || !value) throw new Error(`A ${type} path is required.`)
   if (!findAssetByLocation(assets, value, type)) throw new Error(`No ${type} at "${value}".`)
   return value

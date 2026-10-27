@@ -75,6 +75,15 @@ export const usePlayStore = defineStore('play', {
       if (handled && fire) this.publish()
       return handled
     },
+    setTyping(typing: boolean) {
+      session?.setTyping(typing)
+    },
+    setDisplayScale(scale: number) {
+      session?.setDisplayScale(scale)
+    },
+    tick(elapsedMs: number) {
+      session?.tick(elapsedMs)
+    },
     advanceText(elapsedMs: number) {
       session?.advanceText(elapsedMs)
     },

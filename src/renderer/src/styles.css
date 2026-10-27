@@ -233,7 +233,27 @@ input, textarea { user-select: text; }
 .menu-toolbar .thumb-button img, .menu-toolbar .thumb-fallback { width: 22px; height: 22px; }
 .menu-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; cursor: grab; background-color: #161311; background-image: radial-gradient(#3a322c 1px, transparent 1px); background-size: 22px 22px; }
 .menu-frame-wrap { position: relative; }
-.menu-frame { position: relative; width: 100%; height: 100%; background: var(--bg-page); border: 1px solid #5c4d42; overflow: hidden; cursor: auto; }
+.menu-frame { position: relative; width: 100%; height: 100%; background: var(--bg-page); border: 1px solid #5c4d42; overflow: visible; cursor: auto; }
+.menu-frame .scene-root { overflow: visible; }
+.origin-mark { position: absolute; z-index: 2; width: 9px; height: 9px; margin: -5px 0 0 -5px; border: 1px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px #1a120c; pointer-events: none; }
+.design-grid { position: absolute; inset: 0; z-index: 1; pointer-events: none; background-image: linear-gradient(to right, rgba(255, 244, 230, 0.16) 1px, transparent 1px), linear-gradient(to bottom, rgba(255, 244, 230, 0.16) 1px, transparent 1px); }
+.tileset-scroll { overflow: auto; max-height: 420px; border: 1px solid var(--line); background: #1a120c; }
+.tileset-sheet { position: relative; touch-action: none; }
+.tileset-image { display: block; image-rendering: pixelated; pointer-events: none; user-select: none; -webkit-user-drag: none; }
+.tileset-grid { position: absolute; left: 0; top: 0; pointer-events: none; background-image: linear-gradient(to right, rgba(255, 244, 230, 0.35) 1px, transparent 1px), linear-gradient(to bottom, rgba(255, 244, 230, 0.35) 1px, transparent 1px); }
+.tileset-merge, .tileset-draft { position: absolute; box-shadow: inset 0 0 0 2px #e8946a; pointer-events: none; }
+.tileset-merge.selected { box-shadow: inset 0 0 0 2px #fff; }
+.tilemap-bar { display: flex; gap: 16px; align-items: flex-start; padding: 8px 12px; border-bottom: 1px solid var(--line); max-height: 240px; }
+.tilemap-tools { display: flex; flex-direction: column; gap: 6px; flex: 0 0 280px; }
+.tilemap-tool-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.tilemap-swatches { display: grid; gap: 2px; overflow: auto; max-height: 220px; }
+.tilemap-swatch { width: 32px; height: 32px; padding: 0; border: 1px solid transparent; background-color: #1a120c; image-rendering: pixelated; background-repeat: no-repeat; }
+.tilemap-swatch.selected { border-color: #fff; }
+.tilemap-cells { position: absolute; z-index: 1; pointer-events: none; background-image: linear-gradient(to right, rgba(255, 244, 230, 0.28) 1px, transparent 1px), linear-gradient(to bottom, rgba(255, 244, 230, 0.28) 1px, transparent 1px); }
+.tile-ghost { position: absolute; z-index: 2; pointer-events: none; image-rendering: pixelated; background-repeat: no-repeat; opacity: 0.55; }
+.tile-ghost.is-erase { background: rgba(180, 48, 48, 0.45); }
+.overlay.is-painting { cursor: crosshair; }
+.btn.selected { border-color: #fff; }
 .overlay { position: absolute; inset: 0; z-index: 1; }
 .marquee { position: absolute; border: 1px solid var(--accent); pointer-events: none; }
 .handle { position: absolute; width: 9px; height: 9px; background: #fffdf8; border: 1px solid var(--accent); pointer-events: auto; }

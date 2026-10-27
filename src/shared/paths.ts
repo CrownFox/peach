@@ -62,7 +62,7 @@ export function sanitizeFileStem(name: string): string {
   return stem
 }
 
-const ASSET_FILE_TYPES = ['menu', 'button', 'image', 'script', 'panel', 'collection', 'book', 'composite'] as const
+const ASSET_FILE_TYPES = ['menu', 'button', 'image', 'script', 'panel', 'collection', 'book', 'composite', 'scene', 'tileset'] as const
 export type AssetFileType = (typeof ASSET_FILE_TYPES)[number]
 
 export function assetFileName(stem: string, type: AssetFileType): string {

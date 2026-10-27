@@ -18,17 +18,21 @@ const menu = computed(() => {
   const asset = project.asset(play.currentId)
   return asset?.type === 'menu' ? asset : null
 })
-const nodes = computed(() =>
-  menu.value ? buildScene(menu.value, project.assets, { pressedId: play.pressedId, overrides: play.overrides, pages: play.pages }) : []
-)
+const nodes = computed(() => {
+  if (!menu.value) return []
+  const fitted = fitFrame(box.value.width, box.value.height, menu.value.width, menu.value.height)
+  const displayScale = menu.value.width > 0 ? fitted.width / menu.value.width : 1
+  return buildScene(menu.value, project.assets, { pressedId: play.pressedId, overrides: play.overrides, pages: play.pages, displayScale })
+})
 const modalViews = computed(() =>
   play.modals.flatMap((modal) => {
     const asset = project.asset(modal.menuId)
     if (asset?.type !== 'menu') return []
     const fitted = fitFrame(box.value.width, box.value.height, asset.width, asset.height)
+    const displayScale = asset.width > 0 ? fitted.width / asset.width : 1
     return [{
       style: { width: `${fitted.width}px`, height: `${fitted.height}px` },
-      nodes: buildScene(asset, project.assets, { pressedId: play.pressedId, overrides: modal.overrides, pages: play.pages })
+      nodes: buildScene(asset, project.assets, { pressedId: play.pressedId, overrides: modal.overrides, pages: play.pages, displayScale })
     }]
   })
 )
@@ -45,6 +49,17 @@ const stageStyle = computed(() => {
 function measure(): void {
   if (!viewportEl.value) return
   box.value = { width: viewportEl.value.clientWidth, height: viewportEl.value.clientHeight }
+}
+
+function publishScale(): void {
+  const modal = play.modals.at(-1)
+  const asset = modal ? project.asset(modal.menuId) : menu.value
+  if (!asset || asset.type !== 'menu' || asset.width <= 0) {
+    play.setDisplayScale(1)
+    return
+  }
+  const fitted = fitFrame(box.value.width, box.value.height, asset.width, asset.height)
+  play.setDisplayScale(fitted.width > 0 ? fitted.width / asset.width : 1)
 }
 
 function activate(id: string): void {
@@ -67,9 +82,12 @@ function press(id: string): void {
 
 function onKey(event: KeyboardEvent): void {
   if (project.workspace.activeTab !== 'game') return
-  const action = keyAction(event.type, event.repeat, event.code, isTypingTarget(event.target))
+  const typing = isTypingTarget(event.target)
+  play.setTyping(typing)
+  const action = keyAction(event.type, event.repeat, event.code, false)
   if (!action) return
-  if (play.pressKey(action.code, action.edge, action.fire)) event.preventDefault()
+  const handled = play.pressKey(action.code, action.edge, action.fire && !typing)
+  if (!typing && handled) event.preventDefault()
 }
 
 let clock = 0
@@ -81,7 +99,9 @@ function onFrame(now: number): void {
     clockAt = now
     return
   }
-  if (clockAt > 0) play.advanceText(now - clockAt)
+  play.setTyping(isTypingTarget(document.activeElement))
+  publishScale()
+  if (clockAt > 0) play.tick(now - clockAt)
   clockAt = now
 }
 

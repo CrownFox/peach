@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { assetDocument, clampRect, createAsset, createButtonAsset, createButtonComponent, createMenuComponent, createPageViewerComponent, createPanelAsset, duplicateMenuComponent, parseAsset, parseMeta, planDuplicate } from './assets'
+import { assetDocument, createAsset, createButtonAsset, createButtonComponent, createMenuComponent, createPageViewerComponent, createPanelAsset, duplicateMenuComponent, parseAsset, parseMeta, planDuplicate } from './assets'
+import { intrinsicSize } from './intrinsicSize'
+import { resizeRect, snapTilemapSize, snapToGrid } from './resize'
+import { fillRegion, lineCells, mapSize, placedTile, pruneCells, tileSheet } from './tiles'
 import { writeComponentProperty, type SceneOverrides } from './overrides'
 import { buildScene, devicePixelScale, fitFrame, fittedBorderWidths, nineSliceLayout, snapNineSlice } from './scene'
 import { assetLocation, sanitizeFileStem, uniqueName } from './paths'
 import { buildTree, expandFolderPath, planTreeMove, remapMovedPaths } from './tree'
-import type { Asset, ButtonAsset, CompositeAsset, ImageAsset, MenuAsset } from './types'
+import type { Asset, ButtonAsset, CompositeAsset, ImageAsset, MenuAsset, SceneAsset } from './types'
 
 function image(id: string, name: string, relativePath: string, file: string | null): ImageAsset {
   return { id, type: 'image', name, relativePath, file, width: 64, height: 32, format: 'png' }
@@ -117,6 +120,8 @@ describe('duplicate', () => {
         relativePath: 'main.menu.json',
         width: 880,
         height: 495,
+        gridSize: 16,
+        snapToGrid: false,
         scriptId: null,
         script: '',
         components: [
@@ -195,6 +200,8 @@ describe('scene', () => {
     relativePath: 'main.menu.json',
     width: 880,
     height: 495,
+    gridSize: 16,
+    snapToGrid: false,
     scriptId: null,
     script: '',
     components: [
@@ -230,6 +237,48 @@ describe('scene', () => {
       pressedId: 'play'
     })
     expect(fallback[0]?.imagePath).toBe('plate.png')
+  })
+
+  it('places a component from a script position', () => {
+    const scene = buildScene(menu, [plate, pressed, buttonAsset], { overrides: { play: { x: 110, y: 40 } } })
+    expect(scene[0]?.x).toBeCloseTo((110 / 880) * 100)
+    expect(scene[0]?.y).toBeCloseTo((40 / 495) * 100)
+  })
+
+  it('frames a scene through a viewer and keeps pixel size when asked', () => {
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    town.width = 400
+    town.height = 300
+    const hero = createMenuComponent('image', [])
+    hero.id = 'hero'
+    hero.x = 10
+    hero.y = 20
+    hero.width = 8
+    hero.height = 8
+    town.components = [hero]
+    const viewer = createMenuComponent('sceneViewer', [])
+    viewer.id = 'camera'
+    viewer.x = 0
+    viewer.y = 0
+    viewer.width = 200
+    viewer.height = 100
+    if (viewer.type === 'sceneViewer') {
+      viewer.sceneId = 'town'
+      viewer.scale = 2
+    }
+    const host = { ...menu, components: [viewer] }
+    const framed = buildScene(host, [town])
+    expect(framed[0]?.x).toBeCloseTo((20 / 880) * 100)
+    expect(framed[0]?.y).toBeCloseTo((40 / 495) * 100)
+    expect(framed[0]?.width).toBeCloseTo((16 / 880) * 100)
+    expect(framed[0]?.id).toBe('camera::hero')
+    if (viewer.type === 'sceneViewer') viewer.scaleWithViewer = false
+    const pixels = buildScene(host, [town], { displayScale: 2 })
+    expect(pixels[0]?.x).toBeCloseTo((10 / 880) * 100)
+    expect(pixels[0]?.width).toBeCloseTo((8 / 880) * 100)
+    hero.x = 190
+    const hidden = buildScene(host, [town])
+    expect(hidden).toEqual([])
   })
 
   it('uses play-session text, artwork, and the disabled state', () => {
@@ -456,6 +505,8 @@ describe('documents', () => {
       relativePath: 'main.menu.json',
       width: 880,
       height: 495,
+      gridSize: 16,
+      snapToGrid: false,
       scriptId: null,
       script: '',
       components: [
@@ -503,8 +554,32 @@ describe('documents', () => {
     expect(parseMeta({ name: 'Peach' }, 'Folder')).toMatchObject({ author: '', icon: null, entryMenuId: null })
   })
 
-  it('keeps a component inside its parent while resizing', () => {
-    expect(clampRect({ x: 90, y: -4, width: 30, height: 0 }, 100, 100)).toEqual({ x: 70, y: 0, width: 30, height: 1 })
+  it('keeps a component outside its canvas when its size is negative', () => {
+    const parsed = parseAsset(
+      {
+        formatVersion: 2,
+        id: 'menu',
+        type: 'menu',
+        name: 'Main',
+        width: 200,
+        height: 200,
+        components: [{ id: 'pic', type: 'image', name: 'Pic', x: -40, y: 10, width: -30, height: 20, imageId: null }]
+      },
+      'Main.menu.json'
+    )
+    expect(parsed.type).toBe('menu')
+    if (parsed.type !== 'menu') return
+    expect(parsed.components[0]).toMatchObject({ x: -40, y: 10, width: -30, height: 20 })
+    const copy = duplicateMenuComponent(parsed.components[0]!, parsed.components, 200, 200)
+    expect(copy).toMatchObject({ x: -24, y: 26, width: -30, height: 20 })
+    const node = buildScene(parsed, []).find((item) => item.id === 'pic')
+    expect((node?.x ?? 0) / 100 * parsed.width).toBeCloseTo(-70)
+    expect((node?.y ?? 0) / 100 * parsed.height).toBeCloseTo(10)
+    expect((node?.width ?? 0) / 100 * parsed.width).toBeCloseTo(30)
+    expect((node?.height ?? 0) / 100 * parsed.height).toBeCloseTo(20)
+    expect(node?.flipX).toBe(true)
+    expect(node?.flipY).toBe(false)
+    expect(mapSize(-64, 32, 32, 32)).toEqual({ cols: 2, rows: 1 })
   })
 })
 
@@ -598,6 +673,8 @@ describe('menu pixels', () => {
       relativePath: 'Main.menu.json',
       width: 880,
       height: 495,
+      gridSize: 16,
+      snapToGrid: false,
       scriptId: null,
       script: '',
       components: [slot]
@@ -627,6 +704,8 @@ describe('menu pixels', () => {
       relativePath: 'Main.menu.json',
       width: 880,
       height: 495,
+      gridSize: 16,
+      snapToGrid: false,
       scriptId: null,
       script: '',
       components: [
@@ -701,6 +780,8 @@ describe('composites', () => {
       relativePath: 'Main.menu.json',
       width: 880,
       height: 495,
+      gridSize: 16,
+      snapToGrid: false,
       scriptId: null,
       script: '',
       components: [slot]
@@ -710,6 +791,110 @@ describe('composites', () => {
     const pixelH = ((scene[0]?.height ?? 0) / 100) * menu.height
     expect(pixelW).toBeCloseTo(50)
     expect(pixelH).toBeCloseTo(50)
+    const pixelX = ((scene[0]?.x ?? 0) / 100) * menu.width
+    expect(pixelX).toBeCloseTo(50)
+  })
+
+  it('mirrors the pieces inside a composite when its width is negative', () => {
+    const child = createMenuComponent('image', [])
+    child.id = 'mark'
+    child.x = 0
+    child.y = 0
+    child.width = 20
+    child.height = 20
+    const composite = createAsset('composite', 'Badge', 'Badge.composite.json', 'badge') as CompositeAsset
+    composite.width = 100
+    composite.height = 100
+    composite.components = [child]
+    const slot = createMenuComponent('composite', [])
+    slot.id = 'slot'
+    if (slot.type !== 'composite') throw new Error('slot')
+    slot.compositeId = 'badge'
+    slot.x = 0
+    slot.y = 0
+    slot.width = -100
+    slot.height = 100
+    const menu = createAsset('menu', 'Main', 'Main.menu.json', 'menu') as MenuAsset
+    menu.components = [slot]
+    const node = buildScene(menu, [composite]).find((item) => item.id === 'slot/mark')
+    expect(((node?.x ?? 0) / 100) * menu.width).toBeCloseTo(-20)
+    expect(((node?.y ?? 0) / 100) * menu.height).toBeCloseTo(0)
+    expect(((node?.width ?? 0) / 100) * menu.width).toBeCloseTo(20)
+    expect(node?.flipX).toBe(true)
+    expect(node?.flipY).toBe(false)
+  })
+
+  it('places a composite so its origin sits on x and y', () => {
+    const child = createMenuComponent('label', [])
+    child.id = 'mark'
+    child.x = 0
+    child.y = 0
+    child.width = 160
+    child.height = 160
+    const composite = createAsset('composite', 'Badge', 'Badge.composite.json', 'badge') as CompositeAsset
+    composite.width = 160
+    composite.height = 160
+    composite.originX = 80
+    composite.originY = 40
+    composite.components = [child]
+    const slot = createMenuComponent('composite', [])
+    slot.id = 'slot'
+    if (slot.type === 'composite') slot.compositeId = 'badge'
+    slot.x = 100
+    slot.y = 80
+    slot.width = 160
+    slot.height = 160
+    const menu: MenuAsset = {
+      id: 'menu',
+      type: 'menu',
+      name: 'Main',
+      relativePath: 'Main.menu.json',
+      width: 880,
+      height: 495,
+      gridSize: 16,
+      snapToGrid: false,
+      scriptId: null,
+      script: '',
+      components: [slot]
+    }
+    const scene = buildScene(menu, [composite])
+    expect(((scene[0]?.x ?? 0) / 100) * menu.width).toBeCloseTo(20)
+    expect(((scene[0]?.y ?? 0) / 100) * menu.height).toBeCloseTo(40)
+    const parsed = parseAsset(
+      { id: 'badge', type: 'composite', name: 'Badge', width: 64, height: 64, originX: 12, originY: 8, components: [] },
+      'Badge.composite.json'
+    )
+    expect(parsed).toMatchObject({ originX: 12, originY: 8 })
+  })
+
+  it('keeps the aspect ratio while a resize handle is dragged with shift', () => {
+    const start = { x: 10, y: 20, width: 100, height: 50 }
+    expect(resizeRect(start, 20, 0, 'e', true)).toEqual({ x: 10, y: 15, width: 120, height: 60 })
+    expect(resizeRect(start, 20, 40, 'se', true)).toEqual({ x: 10, y: 20, width: 180, height: 90 })
+    expect(resizeRect(start, 20, 0, 'e', false)).toEqual({ x: 10, y: 20, width: 120, height: 50 })
+  })
+
+  it('reads the original size of an image, a button, a panel, and a composite', () => {
+    const picture = image('img', 'Hero', 'Hero.image.json', 'hero.png')
+    const plate = button('plate', 'Plate', 'Plate.button.json', 'img')
+    const frame = createPanelAsset('frame', 'Frame', 'Frame.panel.json')
+    frame.imageId = 'img'
+    const badge = createAsset('composite', 'Badge', 'Badge.composite.json', 'badge') as CompositeAsset
+    badge.width = 48
+    badge.height = 36
+    const hero = createMenuComponent('image', [])
+    if (hero.type === 'image') hero.imageId = 'img'
+    const control = createMenuComponent('button', [])
+    if (control.type === 'button') control.buttonId = 'plate'
+    const panel = createMenuComponent('panel', [])
+    if (panel.type === 'panel') panel.panelId = 'frame'
+    const slot = createMenuComponent('composite', [])
+    if (slot.type === 'composite') slot.compositeId = 'badge'
+    const assets = [picture, plate, frame, badge]
+    expect(intrinsicSize(hero, assets)).toEqual({ width: 64, height: 32 })
+    expect(intrinsicSize(control, assets)).toEqual({ width: 64, height: 32 })
+    expect(intrinsicSize(panel, assets)).toEqual({ width: 64, height: 32 })
+    expect(intrinsicSize(slot, assets)).toEqual({ width: 48, height: 36 })
   })
 
   it('keeps a composite canvas as small as 32 by 32', () => {
@@ -733,5 +918,114 @@ describe('composites', () => {
     const scene = buildScene(composite, [composite])
     expect(scene).toHaveLength(1)
     expect(scene[0]?.missing).toBe('Composite cycle')
+  })
+})
+
+describe('tiles', () => {
+  it('hangs the rest of a merged tile off the selected cell', () => {
+    const picture = image('img', 'Dungeon', 'Dungeon.image.json', 'dungeon.png')
+    picture.width = 64
+    picture.height = 64
+    const tileset = createAsset('tileset', 'Dungeon', 'tiles/Dungeon.tileset.json', 'dungeon')
+    if (tileset.type !== 'tileset') throw new Error('tileset')
+    tileset.imageId = 'img'
+    tileset.tileWidth = 32
+    tileset.tileHeight = 32
+    tileset.merges = [{ x: 0, y: 0, width: 1, height: 2 }]
+    expect(placedTile(tileset, picture, 0, 1, { x: 0, y: 0, width: 32, height: 32 })).toMatchObject({ x: 0, y: -32, width: 32, height: 64 })
+    expect(placedTile(tileset, picture, 0, 0, { x: 0, y: 0, width: 32, height: 32 })).toMatchObject({ x: 0, y: 0, width: 32, height: 64 })
+    const map = createMenuComponent('tilemap', [])
+    if (map.type !== 'tilemap') throw new Error('tilemap')
+    map.tilesetId = 'dungeon'
+    map.x = 40
+    map.y = 40
+    map.width = 64
+    map.height = 32
+    map.cells = [
+      { x: 0, y: 0, tileX: 0, tileY: 1 },
+      { x: 5, y: 0, tileX: 0, tileY: 0 }
+    ]
+    const menu = createAsset('menu', 'Main', 'Main.menu.json', 'menu') as MenuAsset
+    menu.width = 200
+    menu.height = 200
+    menu.components = [map]
+    const nodes = buildScene(menu, [picture, tileset]).filter((node) => node.kind === 'tile')
+    expect(nodes).toHaveLength(1)
+    expect(nodes[0]?.sheet).toHaveLength(1)
+    expect((nodes[0]?.y ?? 0) / 100 * menu.height).toBeCloseTo(8)
+    expect((nodes[0]?.height ?? 0) / 100 * menu.height).toBeCloseTo(64)
+    expect(pruneCells(map.cells, 2, 1)).toEqual([{ x: 0, y: 0, tileX: 0, tileY: 1 }])
+  })
+
+  it('packs a tilemap into one sheet with tiles touching', () => {
+    const picture = image('img', 'Dungeon', 'Dungeon.image.json', 'dungeon.png')
+    picture.width = 64
+    picture.height = 32
+    const tileset = createAsset('tileset', 'Dungeon', 'tiles/Dungeon.tileset.json', 'dungeon')
+    if (tileset.type !== 'tileset') throw new Error('tileset')
+    tileset.imageId = 'img'
+    tileset.tileWidth = 32
+    tileset.tileHeight = 32
+    const map = createMenuComponent('tilemap', [])
+    if (map.type !== 'tilemap') throw new Error('tilemap')
+    map.tilesetId = 'dungeon'
+    map.width = 64
+    map.height = 32
+    map.cells = [
+      { x: 0, y: 0, tileX: 0, tileY: 0 },
+      { x: 1, y: 0, tileX: 1, tileY: 0 }
+    ]
+    const menu = createAsset('menu', 'Main', 'Main.menu.json', 'menu') as MenuAsset
+    menu.components = [map]
+    const nodes = buildScene(menu, [picture, tileset]).filter((node) => node.kind === 'tile')
+    expect(nodes).toHaveLength(1)
+    const stamps = [...(nodes[0]?.sheet ?? [])].sort((left, right) => left.x - right.x)
+    expect(stamps).toHaveLength(2)
+    expect((stamps[0]?.x ?? 0) + (stamps[0]?.width ?? 0)).toBe(stamps[1]?.x)
+    const packed = tileSheet([
+      { key: 'a', x: 0, y: 0, width: 32, height: 32, crop: { x: 0, y: 0, width: 32, height: 32, imageWidth: 64, imageHeight: 32 } },
+      { key: 'b', x: 0, y: -32, width: 32, height: 64, crop: { x: 0, y: 0, width: 32, height: 64, imageWidth: 64, imageHeight: 32 } }
+    ])
+    expect(packed).toMatchObject({ y: -32, height: 64 })
+    expect(packed?.stamps.map((stamp) => stamp.y).sort((left, right) => left - right)).toEqual([0, 32])
+  })
+
+  it('snaps the closer edge and keeps the aspect ratio', () => {
+    const start = { x: 0, y: 0, width: 100, height: 50 }
+    const next = resizeRect(start, 10, 0, 'se', true)
+    expect(snapToGrid(start, next, 'se', 16, 16, true)).toMatchObject({ x: 0, y: 0, width: 112, height: 56 })
+  })
+
+  it('snaps a tilemap to whole tiles on the closer axis', () => {
+    const start = { x: 0, y: 0, width: 64, height: 32 }
+    const next = resizeRect(start, 20, 2, 'se', true)
+    const snapped = snapTilemapSize(start, next, 'se', 32, 16, true)
+    expect(snapped.width % 32).toBe(0)
+    expect(snapped.height % 16).toBe(0)
+    expect(snapped.width / snapped.height).toBeCloseTo(start.width / start.height, 0)
+  })
+
+  it('draws a straight line of cells and fills a connected area', () => {
+    expect(lineCells(0, 0, 3, 0).map((cell) => cell.x)).toEqual([0, 1, 2, 3])
+    expect(lineCells(1, 1, 1, 1)).toEqual([{ x: 1, y: 1 }])
+    const filled = fillRegion([], 3, 3, 1, 1, { tileX: 2, tileY: 0 })
+    expect(filled).toHaveLength(9)
+    const blocked = fillRegion(
+      [
+        { x: 1, y: 0, tileX: 4, tileY: 4 },
+        { x: 1, y: 1, tileX: 4, tileY: 4 },
+        { x: 1, y: 2, tileX: 4, tileY: 4 }
+      ],
+      3,
+      3,
+      0,
+      1,
+      { tileX: 1, tileY: 0 }
+    )
+    const painted = blocked.filter((cell) => cell.tileX === 1)
+    expect(painted).toHaveLength(3)
+    expect(painted.every((cell) => cell.x === 0)).toBe(true)
+    expect(blocked.filter((cell) => cell.tileX === 4)).toHaveLength(3)
+    expect(fillRegion([{ x: 0, y: 0, tileX: 2, tileY: 0 }], 2, 1, 0, 0, { tileX: 2, tileY: 0 })).toEqual([{ x: 0, y: 0, tileX: 2, tileY: 0 }])
   })
 })

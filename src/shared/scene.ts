@@ -1,9 +1,11 @@
 import { findPage, previewDisplay, type PageDisplay } from './books'
-import { compositeById, fittedContent, instanceId, type Box } from './composites'
+import { compositeById, fittedContent, instanceId, normalizeBox, shiftOrigin, type Box } from './composites'
 import { componentColor, multiplyColor } from './color'
 import { DEFAULT_FONT_FAMILY } from './fonts'
 import { dropdownSelection, groupSelection, rangeNumbers, type ComponentOverride, type SceneOverrides } from './overrides'
 import { findAssetByLocation } from './refs'
+import { boxIntersects, clipInset, sceneById, sceneNodeId, viewerCamera, viewerScene } from './sceneCamera'
+import { imageForTileset, mapSize, pruneCells, tileDraws, tilemapDraws, tileSheet, tilesetFor, type TileStamp } from './tiles'
 import type { Asset, ButtonAsset, ButtonSlices, CanvasAsset, ImageAsset, MenuComponent, PanelAsset, SliceFill } from './types'
 
 export type SceneText = {
@@ -26,7 +28,7 @@ export type SceneControl =
 
 export type SceneNode = {
   id: string
-  kind: 'image' | 'button' | 'panel' | 'label' | 'meter' | 'text' | 'textarea' | 'toggle' | 'toggleGroup' | 'slider' | 'dropdown' | 'pageViewer'
+  kind: 'image' | 'button' | 'panel' | 'label' | 'meter' | 'text' | 'textarea' | 'toggle' | 'toggleGroup' | 'slider' | 'dropdown' | 'pageViewer' | 'tile' | 'collider'
   name: string
   x: number
   y: number
@@ -47,6 +49,13 @@ export type SceneNode = {
   page: PageDisplay | null
   scrollable: boolean
   color: string
+  clip: string | null
+  crisp: boolean
+  crop: { x: number; y: number; width: number; height: number; imageWidth: number; imageHeight: number } | null
+  sheet: TileStamp[] | null
+  flipX: boolean
+  flipY: boolean
+  colliderShape: 'square' | 'circle' | null
 }
 
 export function clampSlices(slices: ButtonSlices, width: number, height: number): ButtonSlices {
@@ -216,13 +225,15 @@ export function buildScene(
     previewState?: 'default' | 'pressed' | 'disabled'
     overrides?: SceneOverrides
     pages?: Record<string, PageDisplay>
+    displayScale?: number
+    showColliders?: boolean
   }
 ): SceneNode[] {
   const byId = new Map<string, Asset>()
   for (const asset of assets) byId.set(asset.id, asset)
   const nodes: SceneNode[] = []
   const root = { x: 0, y: 0, width: canvas.width, height: canvas.height }
-  expand(canvas.components, canvas.width, canvas.height, root, '', [], true, true, '#ffffff', canvas.width, canvas.height, byId, options, nodes)
+  expand(canvas.components, canvas.width, canvas.height, root, '', [], true, true, '#ffffff', canvas.width, canvas.height, byId, options, nodes, null, null, canvas.type === 'scene', false, false)
   return nodes
 }
 
@@ -240,34 +251,102 @@ function expand(
   rootHeight: number,
   assets: Map<string, Asset>,
   options: SceneOptions | undefined,
-  nodes: SceneNode[]
+  nodes: SceneNode[],
+  clipView: Box | null,
+  camera: { viewX: number; viewY: number; menuPerScene: number; view: Box } | null,
+  blockViewers: boolean,
+  flipX: boolean,
+  flipY: boolean
 ): void {
   const scaleX = canvasWidth > 0 ? content.width / canvasWidth : 0
   const scaleY = canvasHeight > 0 ? content.height / canvasHeight : 0
   for (const component of components) {
-    const slot = {
-      x: content.x + component.x * scaleX,
-      y: content.y + component.y * scaleY,
-      width: component.width * scaleX,
-      height: component.height * scaleY
-    }
     const id = instanceId(parent, component.id)
+    const placed = options?.overrides?.[id]
+    const x = typeof placed?.x === 'number' ? placed.x : component.x
+    const y = typeof placed?.y === 'number' ? placed.y : component.y
+    const signed = camera
+      ? {
+          x: camera.view.x + (x - camera.viewX) * camera.menuPerScene,
+          y: camera.view.y + (y - camera.viewY) * camera.menuPerScene,
+          width: component.width * camera.menuPerScene,
+          height: component.height * camera.menuPerScene
+        }
+      : {
+          x: content.x + x * scaleX,
+          y: content.y + y * scaleY,
+          width: component.width * scaleX,
+          height: component.height * scaleY
+        }
+    const frame = camera ? camera.view : content
+    const ownFlipX = component.width < 0
+    const ownFlipY = component.height < 0
+    const drawFlipX = flipX !== ownFlipX
+    const drawFlipY = flipY !== ownFlipY
     const shown = ancestorVisible && (options?.overrides?.[id]?.visible ?? component.visible)
+    const placedBox = (box: Box): Box => reflectBox(box, frame, flipX, flipY)
+    if (component.type === 'sceneViewer') {
+      const slot = placedBox(normalizeBox(signed))
+      const own = componentColor(placed?.tint ?? component.tint)
+      const color = multiplyColor(parentColor, own)
+      if (camera || blockViewers) {
+        const nested = missingComposite(slot, id, component.name, rootWidth, rootHeight, color, 'Scene viewer')
+        nested.visible = shown
+        placeNode(nodes, nested, slot, clipView, drawFlipX, drawFlipY)
+        continue
+      }
+      const scene = viewerScene(component, placed, assets.values())
+      if (!scene || !sceneById(assets.values(), scene.id)) {
+        const missing = missingComposite(slot, id, component.name, rootWidth, rootHeight, color, component.sceneId || (placed && 'sceneRef' in placed) ? 'Missing scene' : 'No scene')
+        missing.visible = shown
+        placeNode(nodes, missing, slot, clipView, drawFlipX, drawFlipY)
+        continue
+      }
+      const view = viewerCamera(component, placed, options?.displayScale ?? 1)
+      const prefix = `scene:${scene.id}/`
+      expand(
+        scene.components,
+        scene.width,
+        scene.height,
+        slot,
+        `scene:${scene.id}`,
+        [scene.id],
+        ancestorEnabled,
+        shown,
+        color,
+        rootWidth,
+        rootHeight,
+        assets,
+        {
+          ...options,
+          presentId: (shared) => (shared.startsWith(prefix) ? sceneNodeId(id, shared.slice(prefix.length)) : shared)
+        },
+        nodes,
+        slot,
+        { viewX: view.viewX, viewY: view.viewY, menuPerScene: view.menuPerScene, view: slot },
+        true,
+        drawFlipX,
+        drawFlipY
+      )
+      continue
+    }
     if (component.type === 'composite') {
       const composite = compositeById(assets.values(), component.compositeId)
       const enabled = ancestorEnabled && (options?.overrides?.[id]?.enabled ?? component.enabled)
       const own = componentColor(options?.overrides?.[id]?.tint ?? component.tint)
+      const placedSlot = placedBox(composite ? shiftOrigin(signed, composite.originX, composite.originY, composite.width, composite.height) : normalizeBox(signed))
       if (!composite || stack.includes(composite.id)) {
-        const missing = missingComposite(slot, id, component.name, rootWidth, rootHeight, multiplyColor(parentColor, own), composite ? 'Composite cycle' : 'Missing composite')
+        const missing = missingComposite(placedSlot, id, component.name, rootWidth, rootHeight, multiplyColor(parentColor, own), composite ? 'Composite cycle' : 'Missing composite')
         missing.visible = shown
-        nodes.push(missing)
+        missing.id = options?.presentId?.(id) ?? id
+        placeNode(nodes, missing, placedSlot, clipView, drawFlipX, drawFlipY)
         continue
       }
       expand(
         composite.components,
         composite.width,
         composite.height,
-        fittedContent(slot, composite.width, composite.height),
+        fittedContent(placedSlot, composite.width, composite.height),
         id,
         [...stack, composite.id],
         enabled,
@@ -277,17 +356,64 @@ function expand(
         rootHeight,
         assets,
         options,
-        nodes
+        nodes,
+        clipView,
+        null,
+        blockViewers,
+        drawFlipX,
+        drawFlipY
       )
       continue
     }
-    const frame = { id, name: component.name, ...percentBox(slot, rootWidth, rootHeight) }
-    const node = componentNode(component, assets, frame, options)
+    const slot = placedBox(normalizeBox(signed))
+    if (component.type === 'collider') {
+      if (options?.showColliders) {
+        const nodeFrame = { id, name: component.name, ...percentBox(slot, rootWidth, rootHeight) }
+        const node = emptyNode(nodeFrame, 'collider')
+        node.colliderShape = component.shape
+        node.id = options.presentId?.(id) ?? node.id
+        node.color = multiplyColor(parentColor, componentColor(options.overrides?.[id]?.tint ?? component.tint))
+        node.visible = shown
+        node.enabled = false
+        placeNode(nodes, node, slot, clipView, drawFlipX, drawFlipY)
+      }
+      continue
+    }
+    if (component.type === 'tile' || component.type === 'tilemap') {
+      emitTiles(component, id, slot, placed, shown, parentColor, rootWidth, rootHeight, assets, options, nodes, clipView, drawFlipX, drawFlipY)
+      continue
+    }
+    const nodeFrame = { id, name: component.name, ...percentBox(slot, rootWidth, rootHeight) }
+    const node = componentNode(component, assets, nodeFrame, options)
+    node.id = options?.presentId?.(id) ?? node.id
     node.color = multiplyColor(parentColor, componentColor(options?.overrides?.[id]?.tint ?? component.tint))
     node.visible = shown
     if (!ancestorEnabled) node.enabled = false
-    nodes.push(node)
+    placeNode(nodes, node, slot, clipView, drawFlipX, drawFlipY)
   }
+}
+
+function reflectBox(box: Box, frame: Box, flipX: boolean, flipY: boolean): Box {
+  if (!flipX && !flipY) return box
+  return {
+    x: flipX ? frame.x + frame.width - (box.x - frame.x) - box.width : box.x,
+    y: flipY ? frame.y + frame.height - (box.y - frame.y) - box.height : box.y,
+    width: box.width,
+    height: box.height
+  }
+}
+
+function placeNode(nodes: SceneNode[], node: SceneNode, slot: Box, clipView: Box | null, flipX: boolean, flipY: boolean): void {
+  node.flipX = flipX
+  node.flipY = flipY
+  if (!clipView) {
+    nodes.push(node)
+    return
+  }
+  if (!boxIntersects(slot, clipView)) return
+  node.clip = clipInset(slot, clipView)
+  node.crisp = true
+  nodes.push(node)
 }
 
 function percentBox(box: Box, rootWidth: number, rootHeight: number): { x: number; y: number; width: number; height: number } {
@@ -314,6 +440,9 @@ type SceneOptions = {
   previewState?: 'default' | 'pressed' | 'disabled'
   overrides?: SceneOverrides
   pages?: Record<string, PageDisplay>
+  displayScale?: number
+  presentId?: (id: string) => string
+  showColliders?: boolean
 }
 
 function componentNode(
@@ -337,6 +466,24 @@ function componentNode(
     return { ...node, imagePath: image.file, imageFit: component.fit }
   }
   if (component.type === 'button') return buttonNode(frame, component, override, assets, options)
+  if (component.type === 'sceneViewer') {
+    const node = emptyNode(frame, 'label')
+    node.missing = 'Scene viewer'
+    node.enabled = false
+    return node
+  }
+  if (component.type === 'tile' || component.type === 'tilemap') {
+    const node = emptyNode(frame, 'label')
+    node.missing = component.type === 'tile' ? 'Tile' : 'Tilemap'
+    node.enabled = false
+    return node
+  }
+  if (component.type === 'collider') {
+    const node = emptyNode(frame, 'collider')
+    node.colliderShape = component.shape
+    node.enabled = false
+    return node
+  }
 
   const node = emptyNode(frame, component.type)
   applyPanel(node, component.panelId, override, assets, component.type === 'panel')
@@ -410,8 +557,86 @@ function emptyNode(frame: { id: string; name: string; x: number; y: number; widt
     control: null,
     page: null,
     scrollable: true,
-    color: '#ffffff'
+    color: '#ffffff',
+    clip: null,
+    crisp: false,
+    crop: null,
+    sheet: null,
+    flipX: false,
+    flipY: false,
+    colliderShape: null
   }
+}
+
+function emitTiles(
+  component: Extract<MenuComponent, { type: 'tile' | 'tilemap' }>,
+  id: string,
+  slot: Box,
+  placed: ComponentOverride | undefined,
+  shown: boolean,
+  parentColor: string,
+  rootWidth: number,
+  rootHeight: number,
+  assets: Map<string, Asset>,
+  options: SceneOptions | undefined,
+  nodes: SceneNode[],
+  clipView: Box | null,
+  flipX: boolean,
+  flipY: boolean
+): void {
+  const color = multiplyColor(parentColor, componentColor(placed?.tint ?? component.tint))
+  const present = options?.presentId?.(id) ?? id
+  const tileset = tilesetFor(component.tilesetId, placed, assets.values())
+  const image = tileset ? imageForTileset(tileset, assets.values()) : null
+  const missing = (text: string): void => {
+    const node = emptyNode({ id: present, name: component.name, ...percentBox(slot, rootWidth, rootHeight) }, 'label')
+    node.missing = text
+    node.visible = shown
+    node.color = color
+    node.enabled = false
+    placeNode(nodes, node, slot, clipView, flipX, flipY)
+  }
+  if (!tileset) {
+    missing(component.tilesetId || (placed && 'tilesetRef' in placed) ? 'Missing tileset' : 'No tileset')
+    return
+  }
+  if (!image?.file) {
+    missing('No image')
+    return
+  }
+  const spanWidth = Math.abs(component.width)
+  const spanHeight = Math.abs(component.height)
+  const size = component.type === 'tilemap' ? mapSize(spanWidth, spanHeight, tileset.tileWidth, tileset.tileHeight) : { cols: 1, rows: 1 }
+  const local =
+    component.type === 'tile'
+      ? { width: spanWidth, height: spanHeight, draws: tileDraws(tileset, image, placed?.tileX ?? component.tileX, placed?.tileY ?? component.tileY, { x: 0, y: 0, width: spanWidth, height: spanHeight }) }
+      : {
+          width: size.cols * tileset.tileWidth,
+          height: size.rows * tileset.tileHeight,
+          draws: tilemapDraws(tileset, image, pruneCells(placed?.cells ?? component.cells, size.cols, size.rows))
+        }
+  if (component.type === 'tile' && local.draws.length === 0) {
+    missing('Outside tileset')
+    return
+  }
+  const scaleX = local.width > 0 ? slot.width / local.width : 0
+  const scaleY = local.height > 0 ? slot.height / local.height : 0
+  const sheet = tileSheet(local.draws)
+  if (!sheet || sheet.width <= 0 || sheet.height <= 0) return
+  const box = {
+    x: slot.x + sheet.x * scaleX,
+    y: slot.y + sheet.y * scaleY,
+    width: sheet.width * scaleX,
+    height: sheet.height * scaleY
+  }
+  const node = emptyNode({ id: `${present}@sheet`, name: component.name, ...percentBox(box, rootWidth, rootHeight) }, 'tile')
+  node.imagePath = image.file
+  node.sheet = sheet.stamps
+  node.crisp = true
+  node.color = color
+  node.visible = shown
+  node.enabled = false
+  placeNode(nodes, node, box, clipView, flipX, flipY)
 }
 
 function buttonNode(
@@ -430,7 +655,8 @@ function buttonNode(
     node.missing = referenced(component.buttonId, override?.buttonRef) ? 'Missing button' : 'No button'
     return node
   }
-  const image = chooseButtonImage(button, assets, frame.id, node.enabled, override, options)
+  const displayId = options?.presentId?.(frame.id) ?? frame.id
+  const image = chooseButtonImage(button, assets, displayId, node.enabled, override, options)
   if (!image?.file) {
     node.missing = 'No image'
     return node

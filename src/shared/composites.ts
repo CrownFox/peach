@@ -1,6 +1,18 @@
+import { sceneById } from './sceneCamera'
 import type { Asset, CanvasAsset, CompositeAsset, MenuAsset, MenuComponent } from './types'
 
 export type Box = { x: number; y: number; width: number; height: number }
+
+export function normalizeBox(box: Box): Box {
+  const width = box.width
+  const height = box.height
+  return {
+    x: width < 0 ? box.x + width : box.x,
+    y: height < 0 ? box.y + height : box.y,
+    width: Math.abs(width),
+    height: Math.abs(height)
+  }
+}
 
 export type Piece = {
   instanceId: string
@@ -19,11 +31,14 @@ export function instanceId(parent: string, componentId: string): string {
   return parent ? `${parent}/${componentId}` : componentId
 }
 
+export function letterboxScale(slotWidth: number, slotHeight: number, frameWidth: number, frameHeight: number): number {
+  if (slotWidth <= 0 || slotHeight <= 0 || frameWidth <= 0 || frameHeight <= 0) return 0
+  return Math.min(slotWidth / frameWidth, slotHeight / frameHeight)
+}
+
 export function fittedContent(slot: Box, frameWidth: number, frameHeight: number): Box {
-  if (slot.width <= 0 || slot.height <= 0 || frameWidth <= 0 || frameHeight <= 0) {
-    return { x: slot.x, y: slot.y, width: 0, height: 0 }
-  }
-  const scale = Math.min(slot.width / frameWidth, slot.height / frameHeight)
+  const scale = letterboxScale(slot.width, slot.height, frameWidth, frameHeight)
+  if (scale <= 0) return { x: slot.x, y: slot.y, width: 0, height: 0 }
   const width = frameWidth * scale
   const height = frameHeight * scale
   return {
@@ -34,21 +49,64 @@ export function fittedContent(slot: Box, frameWidth: number, frameHeight: number
   }
 }
 
+export function shiftOrigin(slot: Box, originX: number, originY: number, frameWidth: number, frameHeight: number): Box {
+  const scale = letterboxScale(Math.abs(slot.width), Math.abs(slot.height), frameWidth, frameHeight)
+  return normalizeBox({
+    x: slot.x - originX * scale,
+    y: slot.y - originY * scale,
+    width: slot.width,
+    height: slot.height
+  })
+}
+
+export function visualRect(component: MenuComponent, assets: Iterable<Asset>): Box {
+  const rect = { x: component.x, y: component.y, width: component.width, height: component.height }
+  if (component.type !== 'composite') return normalizeBox(rect)
+  const composite = compositeById(assets, component.compositeId)
+  if (!composite) return normalizeBox(rect)
+  return shiftOrigin(rect, composite.originX, composite.originY, composite.width, composite.height)
+}
+
+export function storedFromVisual(component: MenuComponent, visual: Box, assets: Iterable<Asset>): Box {
+  const box = normalizeBox(visual)
+  const signed = visual.width < 0 || visual.height < 0 ? visual : box
+  if (component.type !== 'composite') return signed
+  const composite = compositeById(assets, component.compositeId)
+  if (!composite) return signed
+  const scale = letterboxScale(box.width, box.height, composite.width, composite.height)
+  return {
+    x: box.x + composite.originX * scale,
+    y: box.y + composite.originY * scale,
+    width: box.width,
+    height: box.height
+  }
+}
+
 export function resolvePiece(menu: MenuAsset, assets: Iterable<Asset>, id: string): Piece | null {
+  const shared = /^scene:([^/]+)\/(.+)$/.exec(id)
+  if (shared?.[1] && shared[2]) {
+    const scene = sceneById(assets, shared[1])
+    if (!scene) return null
+    return walkPiece(scene.components, shared[2], id, assets)
+  }
+  return walkPiece(menu.components, id, id, assets)
+}
+
+function walkPiece(components: MenuComponent[], id: string, instance: string, assets: Iterable<Asset>): Piece | null {
   const parts = id.split('/').filter(Boolean)
   if (parts.length === 0) return null
-  let components = menu.components
+  let current = components
   let component: MenuComponent | undefined
   for (let index = 0; index < parts.length; index += 1) {
-    component = components.find((item) => item.id === parts[index])
+    component = current.find((item) => item.id === parts[index])
     if (!component) return null
     if (index === parts.length - 1) break
     if (component.type !== 'composite') return null
     const asset = compositeById(assets, component.compositeId)
     if (!asset) return null
-    components = asset.components
+    current = asset.components
   }
-  return component ? { instanceId: id, component } : null
+  return component ? { instanceId: instance, component } : null
 }
 
 export function instanceVisible(
@@ -99,6 +157,36 @@ export function instanceEnabled(
     }
   }
   return enabled
+}
+
+export function scenePieceAllows(
+  assets: Iterable<Asset>,
+  sceneId: string,
+  localId: string,
+  overrides: Record<string, { visible?: boolean; enabled?: boolean } | undefined>,
+  mode: 'visible' | 'enabled'
+): boolean {
+  const scene = sceneById(assets, sceneId)
+  if (!scene) return false
+  const parts = localId.split('/').filter(Boolean)
+  let components = scene.components
+  for (let index = 0; index < parts.length; index += 1) {
+    const component = components.find((item) => item.id === parts[index])
+    if (!component) return false
+    const key = `scene:${sceneId}/${parts.slice(0, index + 1).join('/')}`
+    if (mode === 'visible' && (overrides[key]?.visible ?? component.visible) === false) return false
+    if (mode === 'enabled' && (component.type === 'button' || component.type === 'composite')) {
+      const enabled = component.type === 'button' || component.type === 'composite' ? component.enabled : true
+      if ((overrides[key]?.enabled ?? enabled) === false) return false
+    }
+    if (index < parts.length - 1) {
+      if (component.type !== 'composite') return false
+      const asset = compositeById(assets, component.compositeId)
+      if (!asset) return false
+      components = asset.components
+    }
+  }
+  return parts.length > 0
 }
 
 export function visitPieces(canvas: CanvasAsset, assets: Iterable<Asset>, visit: (piece: Piece) => void): void {

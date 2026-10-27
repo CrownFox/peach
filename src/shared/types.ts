@@ -1,6 +1,6 @@
 export const FORMAT_VERSION = 2
 
-export type AssetType = 'menu' | 'button' | 'image' | 'script' | 'panel' | 'collection' | 'book' | 'composite'
+export type AssetType = 'menu' | 'button' | 'image' | 'script' | 'panel' | 'collection' | 'book' | 'composite' | 'scene' | 'tileset'
 
 export type ProjectMeta = {
   formatVersion: number
@@ -226,6 +226,39 @@ export type CompositeComponent = ComponentBase & {
   enabled: boolean
 }
 
+export type SceneViewerComponent = ComponentBase & {
+  type: 'sceneViewer'
+  sceneId: string | null
+  viewX: number
+  viewY: number
+  scale: number
+  scaleWithViewer: boolean
+}
+
+export type TileSpan = { x: number; y: number; width: number; height: number }
+
+export type TileCell = { x: number; y: number; tileX: number; tileY: number }
+
+export type TileComponent = ComponentBase & {
+  type: 'tile'
+  tilesetId: string | null
+  tileX: number
+  tileY: number
+}
+
+export type TilemapComponent = ComponentBase & {
+  type: 'tilemap'
+  tilesetId: string | null
+  cells: TileCell[]
+}
+
+export type ColliderComponent = ComponentBase & {
+  type: 'collider'
+  shape: 'square' | 'circle'
+  tags: string[]
+  enabled: boolean
+}
+
 export type MenuComponent =
   | ImageComponent
   | ButtonComponent
@@ -240,6 +273,10 @@ export type MenuComponent =
   | DropdownComponent
   | PageViewerComponent
   | CompositeComponent
+  | SceneViewerComponent
+  | TileComponent
+  | TilemapComponent
+  | ColliderComponent
 
 export const DEFAULT_MENU_WIDTH = 880
 export const DEFAULT_MENU_HEIGHT = 495
@@ -254,6 +291,8 @@ export type MenuAsset = {
   relativePath: string
   width: number
   height: number
+  gridSize: number
+  snapToGrid: boolean
   scriptId: string | null
   script: string
   components: MenuComponent[]
@@ -266,12 +305,41 @@ export type CompositeAsset = {
   relativePath: string
   width: number
   height: number
+  originX: number
+  originY: number
+  gridSize: number
+  snapToGrid: boolean
   scriptId: string | null
   script: string
   components: MenuComponent[]
 }
 
-export type CanvasAsset = MenuAsset | CompositeAsset
+export type SceneAsset = {
+  id: string
+  type: 'scene'
+  name: string
+  relativePath: string
+  width: number
+  height: number
+  gridSize: number
+  snapToGrid: boolean
+  scriptId: string | null
+  script: string
+  components: MenuComponent[]
+}
+
+export type TilesetAsset = {
+  id: string
+  type: 'tileset'
+  name: string
+  relativePath: string
+  imageId: string | null
+  tileWidth: number
+  tileHeight: number
+  merges: TileSpan[]
+}
+
+export type CanvasAsset = MenuAsset | CompositeAsset | SceneAsset
 
 export type ScriptAsset = {
   id: string
@@ -338,7 +406,7 @@ export type PageField = {
   default: string | boolean
 }
 
-export type Asset = MenuAsset | ButtonAsset | ImageAsset | ScriptAsset | PanelAsset | CollectionAsset | BookAsset | CompositeAsset
+export type Asset = MenuAsset | ButtonAsset | ImageAsset | ScriptAsset | PanelAsset | CollectionAsset | BookAsset | CompositeAsset | SceneAsset | TilesetAsset
 
 export type WorkspaceWindow = {
   assetId: string
@@ -354,6 +422,7 @@ export type Workspace = {
   windows: WorkspaceWindow[]
   openMenuIds: string[]
   openCompositeIds: string[]
+  openSceneIds: string[]
   openCollectionIds: string[]
   openBookIds: string[]
   openPageTabs: string[]
@@ -398,8 +467,12 @@ export function isComposite(asset: Asset): asset is CompositeAsset {
   return asset.type === 'composite'
 }
 
+export function isScene(asset: Asset): asset is SceneAsset {
+  return asset.type === 'scene'
+}
+
 export function isCanvas(asset: Asset): asset is CanvasAsset {
-  return asset.type === 'menu' || asset.type === 'composite'
+  return asset.type === 'menu' || asset.type === 'composite' || asset.type === 'scene'
 }
 
 export function isButton(asset: Asset): asset is ButtonAsset {

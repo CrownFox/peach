@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { BUILTIN_FONTS } from '@shared/fonts'
 import { createId } from '@shared/ids'
 import type { ComponentOverride } from '@shared/overrides'
+import { applyIntrinsicSize } from '@shared/intrinsicSize'
 import type { MenuComponent } from '@shared/types'
 import { usePlayStore } from '@/stores/play'
 import { useProjectStore } from '@/stores/project'
@@ -80,7 +81,9 @@ function setTextRate(event: Event): void {
 
 function setPanel(id: string | null): void {
   patch((component) => {
-    if (component.type !== 'image' && component.type !== 'button' && component.type !== 'composite') component.panelId = id
+    if (component.type === 'image' || component.type === 'button' || component.type === 'composite' || component.type === 'sceneViewer' || component.type === 'tile' || component.type === 'tilemap' || component.type === 'collider') return
+    component.panelId = id
+    if (component.type === 'panel' && id) applyIntrinsicSize(component, project.assets)
   })
   forget('panelRef')
 }
@@ -218,7 +221,7 @@ function toggleSelected(id: string, event: Event): void {
 
 <template>
   <AssetSelect
-    v-if="component.type !== 'image' && component.type !== 'button' && component.type !== 'composite'"
+    v-if="component.type !== 'image' && component.type !== 'button' && component.type !== 'composite' && component.type !== 'sceneViewer' && component.type !== 'tile' && component.type !== 'tilemap' && component.type !== 'collider'"
     label="Panel"
     type="panel"
     clearable

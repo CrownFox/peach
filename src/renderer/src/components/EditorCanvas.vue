@@ -2,11 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useCanvasView } from '@/canvasView'
 import { useProjectStore } from '@/stores/project'
+import { resizeRect } from '@shared/resize'
 import { GAME_PROPERTIES_WINDOW } from '@shared/workspace'
 import ButtonEditor from './ButtonEditor.vue'
 import GameProperties from './GameProperties.vue'
 import ImageEditor from './ImageEditor.vue'
 import PanelEditor from './PanelEditor.vue'
+import TilesetEditor from './TilesetEditor.vue'
 
 const project = useProjectStore()
 const edges = ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se']
@@ -22,9 +24,9 @@ function panBackground(event: PointerEvent): boolean {
   return !target?.closest('.asset-window')
 }
 
-function assetType(assetId: string): 'image' | 'button' | 'panel' | null {
+function assetType(assetId: string): 'image' | 'button' | 'panel' | 'tileset' | null {
   const asset = project.asset(assetId)
-  return asset?.type === 'image' || asset?.type === 'button' || asset?.type === 'panel' ? asset.type : null
+  return asset?.type === 'image' || asset?.type === 'button' || asset?.type === 'panel' || asset?.type === 'tileset' ? asset.type : null
 }
 
 function onTitleDown(event: PointerEvent, assetId: string): void {
@@ -58,18 +60,8 @@ function onResize(event: PointerEvent, assetId: string): void {
   const move = (ev: PointerEvent): void => {
     const dx = (ev.clientX - origin.x) / scale
     const dy = (ev.clientY - origin.y) / scale
-    let { left, top, width, height } = origin
-    if (edge.includes('e')) width = origin.width + dx
-    if (edge.includes('s')) height = origin.height + dy
-    if (edge.includes('w')) {
-      width = origin.width - dx
-      left = origin.left + dx
-    }
-    if (edge.includes('n')) {
-      height = origin.height - dy
-      top = origin.top + dy
-    }
-    project.resizeWindow(assetId, { x: left, y: top, width, height })
+    const next = resizeRect({ x: origin.left, y: origin.top, width: origin.width, height: origin.height }, dx, dy, edge, ev.shiftKey)
+    project.resizeWindow(assetId, { x: next.x, y: next.y, width: next.width, height: next.height })
   }
   const up = (): void => {
     window.removeEventListener('pointermove', move)
@@ -89,7 +81,7 @@ onBeforeUnmount(() => stopWheel?.())
 
 <template>
   <div ref="canvasEl" class="canvas" :class="{ 'is-panning': panning }" :style="gridStyle" @pointerdown="onPointerDown($event, panBackground)">
-    <div v-if="windows.length === 0" class="canvas-empty">Double-click an image, button, or panel in the tree, or choose Properties under Project.</div>
+    <div v-if="windows.length === 0" class="canvas-empty">Double-click an image, button, panel, or tileset in the tree, or choose Properties under Project.</div>
     <div class="canvas-surface" :style="worldStyle">
       <article
         v-for="win in windows"
@@ -116,6 +108,7 @@ onBeforeUnmount(() => stopWheel?.())
           <ImageEditor v-else-if="assetType(win.assetId) === 'image'" :asset-id="win.assetId" />
           <ButtonEditor v-else-if="assetType(win.assetId) === 'button'" :asset-id="win.assetId" />
           <PanelEditor v-else-if="assetType(win.assetId) === 'panel'" :asset-id="win.assetId" />
+          <TilesetEditor v-else-if="assetType(win.assetId) === 'tileset'" :asset-id="win.assetId" />
         </div>
       </article>
     </div>

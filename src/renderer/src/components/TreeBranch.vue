@@ -83,6 +83,8 @@ function badge(): string {
   if (props.node.assetType === 'collection') return 'C'
   if (props.node.assetType === 'book') return 'Bk'
   if (props.node.assetType === 'composite') return 'Cp'
+  if (props.node.assetType === 'scene') return 'Sc'
+  if (props.node.assetType === 'tileset') return 'Ts'
   return 'I'
 }
 </script>

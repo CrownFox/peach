@@ -37,6 +37,11 @@ function hintsFor(tab: string): ScriptHints {
       propertySources: [referencedScript(composite?.scriptId ?? null)]
     }
   }
+  if (tab.startsWith('scene:')) {
+    const canvas = project.asset(tab.slice(6))
+    const scene = canvas?.type === 'scene' ? canvas : null
+    return { handles: scene ? componentHandles(scene) : [], self: 'scene' }
+  }
   if (tab.startsWith('component:')) {
     const [, menuId, componentId] = tab.split(':')
     const menu = project.asset(menuId ?? null)

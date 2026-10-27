@@ -31,7 +31,8 @@ onBeforeUnmount(() => {
   observer?.disconnect()
   stopScale?.()
 })
-watch(() => [props.nodes, props.interactive], () => draw(), { deep: true })
+watch(() => props.nodes, () => draw())
+watch(() => props.interactive, () => draw())
 </script>
 
 <template>

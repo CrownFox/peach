@@ -13,7 +13,7 @@ import {
   sanitizeFileStem,
   uniqueName
 } from './paths'
-import { FORMAT_VERSION, DEFAULT_MENU_HEIGHT, DEFAULT_MENU_WIDTH, MIN_COMPOSITE_SIZE, MIN_MENU_HEIGHT, MIN_MENU_WIDTH, type Asset, type AssetType, type ButtonAsset, type ButtonComponent, type ButtonSlices, type SliceFill, type ChoiceOption, type CollectionAsset, type CollectionEntry, type CollectionField, type ComponentBase, type CompositeAsset, type CompositeComponent, type DropdownComponent, type ImageAsset, type ImageComponent, type LabelComponent, type MenuAsset, type MenuComponent, type MeterComponent, type PanelAsset, type PanelComponent, type ProjectMeta, type ScriptAsset, type SliderComponent, type TextAreaComponent, type TextComponent, type ToggleComponent, type ToggleGroupComponent } from './types'
+import { FORMAT_VERSION, DEFAULT_MENU_HEIGHT, DEFAULT_MENU_WIDTH, MIN_COMPOSITE_SIZE, MIN_MENU_HEIGHT, MIN_MENU_WIDTH, type Asset, type AssetType, type ButtonAsset, type ButtonComponent, type ButtonSlices, type SliceFill, type ChoiceOption, type ColliderComponent, type CollectionAsset, type CollectionEntry, type CollectionField, type ComponentBase, type CompositeAsset, type CompositeComponent, type DropdownComponent, type ImageAsset, type ImageComponent, type LabelComponent, type MenuAsset, type MenuComponent, type MeterComponent, type PanelAsset, type PanelComponent, type ProjectMeta, type SceneAsset, type SceneViewerComponent, type ScriptAsset, type TileCell, type TileComponent, type TilemapComponent, type TileSpan, type TilesetAsset, type SliderComponent, type TextAreaComponent, type TextComponent, type ToggleComponent, type ToggleGroupComponent } from './types'
 import { DEFAULT_TEXT_RATE, type BookAsset, type BookChapter, type BookPage, type PageBlock, type PageField, type PageMarks, type PageParagraph, type PageRun, type PageViewerComponent } from './types'
 
 export function defaultSlices(): ButtonSlices {
@@ -55,6 +55,8 @@ export function createMenuAsset(id: string, name: string, relativePath: string):
     relativePath,
     width: DEFAULT_MENU_WIDTH,
     height: DEFAULT_MENU_HEIGHT,
+    gridSize: 16,
+    snapToGrid: false,
     scriptId: null,
     script: '',
     components: []
@@ -69,8 +71,28 @@ export function createCompositeAsset(id: string, name: string, relativePath: str
     relativePath,
     width: DEFAULT_MENU_WIDTH,
     height: DEFAULT_MENU_HEIGHT,
+    originX: 0,
+    originY: 0,
+    gridSize: 16,
+    snapToGrid: false,
     scriptId: null,
-    script: 'function onLoad()\nend\n',
+    script: 'function onLoad()\nend\n\nfunction onUpdate(dt)\nend\n',
+    components: []
+  }
+}
+
+export function createSceneAsset(id: string, name: string, relativePath: string): SceneAsset {
+  return {
+    id,
+    type: 'scene',
+    name,
+    relativePath,
+    width: DEFAULT_MENU_WIDTH,
+    height: DEFAULT_MENU_HEIGHT,
+    gridSize: 16,
+    snapToGrid: false,
+    scriptId: null,
+    script: 'function onLoad()\nend\n\nfunction onUpdate(dt)\nend\n',
     components: []
   }
 }
@@ -130,7 +152,13 @@ export function createAsset(type: AssetType, name: string, relativePath: string,
   if (type === 'collection') return createCollectionAsset(id, name, relativePath)
   if (type === 'book') return createBookAsset(id, name, relativePath)
   if (type === 'composite') return createCompositeAsset(id, name, relativePath)
+  if (type === 'scene') return createSceneAsset(id, name, relativePath)
+  if (type === 'tileset') return createTilesetAsset(id, name, relativePath)
   return createMenuAsset(id, name, relativePath)
+}
+
+export function createTilesetAsset(id: string, name: string, relativePath: string): TilesetAsset {
+  return { id, type: 'tileset', name, relativePath, imageId: null, tileWidth: 16, tileHeight: 16, merges: [] }
 }
 
 export function assetDocument(asset: Asset): Record<string, unknown> {
@@ -149,6 +177,12 @@ function str(value: unknown, fallback = ''): string {
 
 function num(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function wholeScale(value: unknown): number {
+  const parsed = num(value, 1)
+  const whole = Math.floor(parsed)
+  return whole >= 1 ? whole : 1
 }
 
 function idOrNull(value: unknown): string | null {
@@ -204,7 +238,11 @@ const COMPONENT_NAMES: Record<MenuComponent['type'], string> = {
   slider: 'Slider',
   dropdown: 'Dropdown',
   pageViewer: 'Page viewer',
-  composite: 'Composite'
+  composite: 'Composite',
+  sceneViewer: 'Scene viewer',
+  tile: 'Tile',
+  tilemap: 'Tilemap',
+  collider: 'Collider'
 }
 
 function textStyle(value: Record<string, unknown>): { fontFamily: string; fontSize: number; color: string } {
@@ -319,7 +357,60 @@ function parseComponent(value: unknown): MenuComponent | null {
   if (type === 'composite') {
     return { ...base, type, compositeId: idOrNull(value.compositeId), enabled: value.enabled !== false }
   }
+  if (type === 'sceneViewer') {
+    return {
+      ...base,
+      type,
+      sceneId: idOrNull(value.sceneId),
+      viewX: num(value.viewX, 0),
+      viewY: num(value.viewY, 0),
+      scale: wholeScale(value.scale),
+      scaleWithViewer: value.scaleWithViewer !== false
+    }
+  }
+  if (type === 'tile') {
+    return { ...base, type, tilesetId: idOrNull(value.tilesetId), tileX: Math.max(0, Math.floor(num(value.tileX, 0))), tileY: Math.max(0, Math.floor(num(value.tileY, 0))) }
+  }
+  if (type === 'tilemap') {
+    const cells = Array.isArray(value.cells) ? value.cells.flatMap((item) => {
+      const cell = parseTileCell(item)
+      return cell ? [cell] : []
+    }) : []
+    return { ...base, type, tilesetId: idOrNull(value.tilesetId), cells }
+  }
+  if (type === 'collider') {
+    return {
+      ...base,
+      type,
+      shape: value.shape === 'circle' ? 'circle' : 'square',
+      tags: parseStringList(value.tags).flatMap((tag) => {
+        const trimmed = tag.trim()
+        return trimmed ? [trimmed] : []
+      }),
+      enabled: value.enabled !== false
+    }
+  }
   return { ...base, type, options: parseOptions(value.options), value: str(value.value), ...textStyle(value), panelId }
+}
+
+function parseTileCell(value: unknown): TileCell | null {
+  if (!isRecord(value)) return null
+  const x = Math.floor(num(value.x, -1))
+  const y = Math.floor(num(value.y, -1))
+  const tileX = Math.floor(num(value.tileX, -1))
+  const tileY = Math.floor(num(value.tileY, -1))
+  if (x < 0 || y < 0 || tileX < 0 || tileY < 0) return null
+  return { x, y, tileX, tileY }
+}
+
+function parseTileSpan(value: unknown): TileSpan | null {
+  if (!isRecord(value)) return null
+  const x = Math.floor(num(value.x, -1))
+  const y = Math.floor(num(value.y, -1))
+  const width = Math.floor(num(value.width, 0))
+  const height = Math.floor(num(value.height, 0))
+  if (x < 0 || y < 0 || width < 1 || height < 1) return null
+  return { x, y, width, height }
 }
 
 function parseCollectionField(value: unknown): CollectionField | null {
@@ -545,21 +636,38 @@ export function parseAsset(value: unknown, relativePath: string): Asset {
   }
   if (type === 'collection') return parseCollectionAsset(value, id, name, relativePath)
   if (type === 'book') return parseBookAsset(value, id, name, relativePath)
-  if (type === 'menu' || type === 'composite') return parseCanvasAsset(type, value, id, name, relativePath)
+  if (type === 'menu' || type === 'composite' || type === 'scene') return parseCanvasAsset(type, value, id, name, relativePath)
+  if (type === 'tileset') {
+    const merges = Array.isArray(value.merges) ? value.merges.flatMap((item) => {
+      const span = parseTileSpan(item)
+      return span ? [span] : []
+    }) : []
+    return {
+      id,
+      type,
+      name,
+      relativePath,
+      imageId: idOrNull(value.imageId),
+      tileWidth: Math.max(1, Math.floor(num(value.tileWidth, 16))),
+      tileHeight: Math.max(1, Math.floor(num(value.tileHeight, 16))),
+      merges
+    }
+  }
   throw new Error(`${relativePath} has an unknown type.`)
 }
 
 function parseCanvasAsset(
-  type: 'menu' | 'composite',
+  type: 'menu' | 'composite' | 'scene',
   value: Record<string, unknown>,
   id: string,
   name: string,
   relativePath: string
-): MenuAsset | CompositeAsset {
+): MenuAsset | CompositeAsset | SceneAsset {
   const components = Array.isArray(value.components)
     ? value.components.flatMap((item) => {
         const component = parseComponent(item)
-        return component ? [component] : []
+        if (!component || (type === 'scene' && component.type === 'sceneViewer')) return []
+        return [component]
       })
     : []
   const min = minimumCanvasSize(type)
@@ -567,20 +675,25 @@ function parseCanvasAsset(
   const height = Math.max(min.height, num(value.height, DEFAULT_MENU_HEIGHT))
   const legacy = type === 'menu' && num(value.formatVersion, 1) < 2
   const placed = components.map((component) => {
-    const rect = legacy ? pixelsFromPercent(component, width, height) : clampRect(component, width, height)
+    const rect = legacy ? pixelsFromPercent(component, width, height) : roundRect(component)
     return { ...component, ...rect }
   })
-  return {
+  const canvas = {
     id,
-    type,
     name,
     relativePath,
     width,
     height,
+    gridSize: Math.max(1, Math.round(num(value.gridSize, 16))),
+    snapToGrid: value.snapToGrid === true,
     scriptId: idOrNull(value.scriptId),
     script: str(value.script),
     components: placed
   }
+  if (type === 'composite') {
+    return { ...canvas, type, originX: num(value.originX, 0), originY: num(value.originY, 0) }
+  }
+  return { ...canvas, type }
 }
 
 export function parseMeta(value: unknown, fallbackName: string): ProjectMeta {
@@ -598,9 +711,18 @@ export function parseMeta(value: unknown, fallbackName: string): ProjectMeta {
   }
 }
 
-export function minimumCanvasSize(type: 'menu' | 'composite'): { width: number; height: number } {
-  if (type === 'composite') return { width: MIN_COMPOSITE_SIZE, height: MIN_COMPOSITE_SIZE }
+export function minimumCanvasSize(type: 'menu' | 'composite' | 'scene'): { width: number; height: number } {
+  if (type === 'composite' || type === 'scene') return { width: MIN_COMPOSITE_SIZE, height: MIN_COMPOSITE_SIZE }
   return { width: MIN_MENU_WIDTH, height: MIN_MENU_HEIGHT }
+}
+
+function roundRect(rect: { x: number; y: number; width: number; height: number }): { x: number; y: number; width: number; height: number } {
+  return {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height)
+  }
 }
 
 export function clampRect(
@@ -714,7 +836,23 @@ export function createMenuComponent(type: MenuComponent['type'], components: Men
   if (type === 'slider') return createSliderComponent(components)
   if (type === 'pageViewer') return createPageViewerComponent(components)
   if (type === 'composite') return createCompositeComponent(components)
+  if (type === 'sceneViewer') return createSceneViewerComponent(components)
+  if (type === 'tile') return createTileComponent(components)
+  if (type === 'tilemap') return createTilemapComponent(components)
+  if (type === 'collider') return createColliderComponent(components)
   return createDropdownComponent(components)
+}
+
+export function createTileComponent(components: MenuComponent[]): TileComponent {
+  return { ...componentBase(components, 'Tile', { x: 8, y: 8, width: 16, height: 16 }), type: 'tile', tilesetId: null, tileX: 0, tileY: 0 }
+}
+
+export function createTilemapComponent(components: MenuComponent[]): TilemapComponent {
+  return { ...componentBase(components, 'Tilemap', { x: 8, y: 8, width: 64, height: 64 }), type: 'tilemap', tilesetId: null, cells: [] }
+}
+
+export function createColliderComponent(components: MenuComponent[]): ColliderComponent {
+  return { ...componentBase(components, 'Collider', { x: 8, y: 8, width: 32, height: 32 }), type: 'collider', shape: 'square', tags: [], enabled: true }
 }
 
 export function createCompositeComponent(components: MenuComponent[]): CompositeComponent {
@@ -723,6 +861,18 @@ export function createCompositeComponent(components: MenuComponent[]): Composite
     type: 'composite',
     compositeId: null,
     enabled: true
+  }
+}
+
+export function createSceneViewerComponent(components: MenuComponent[]): SceneViewerComponent {
+  return {
+    ...componentBase(components, 'Scene viewer', { x: 8, y: 8, width: 48, height: 32 }),
+    type: 'sceneViewer',
+    sceneId: null,
+    viewX: 0,
+    viewY: 0,
+    scale: 1,
+    scaleWithViewer: true
   }
 }
 
@@ -840,15 +990,10 @@ export function duplicateMenuComponent(
     `${source.name} copy`
   )
   copy.handle = copy.handle ? uniqueScriptHandle(copy.handle, siblings.map((item) => item.handle)) : ''
-  const rect = clampRect(
-    { x: source.x + 16, y: source.y + 16, width: source.width, height: source.height },
-    menuWidth,
-    menuHeight
-  )
-  copy.x = rect.x
-  copy.y = rect.y
-  copy.width = rect.width
-  copy.height = rect.height
+  copy.x = source.x + 16
+  copy.y = source.y + 16
+  copy.width = source.width
+  copy.height = source.height
   return copy
 }
 
@@ -953,7 +1098,7 @@ function planFolderDuplicate(
   const cloned = contained.map((asset) => {
     const relative = replacePrefix(asset.relativePath, targetPath, destPrefix)
     const nextParent = parentPath(relative)
-    const nextStem = asset.relativePath.split('/').pop()?.replace(/\.(menu|button|image|script|panel|collection|book)\.json$/i, '') ?? asset.name
+    const nextStem = asset.relativePath.split('/').pop()?.replace(/\.(menu|button|image|script|panel|collection|book|composite|scene|tileset)\.json$/i, '') ?? asset.name
     const next = duplicateAsset(asset, nextStem, nextParent, idMap, ids, false)
     next.relativePath = relative
     next.name = asset.name
@@ -1002,7 +1147,7 @@ function duplicateAsset(
     }
   }
   if (asset.type === 'book') return { ...JSON.parse(JSON.stringify(asset)) as BookAsset, id, name, relativePath }
-  if (asset.type === 'button' || asset.type === 'script' || asset.type === 'panel' || asset.type === 'collection') {
+  if (asset.type === 'button' || asset.type === 'script' || asset.type === 'panel' || asset.type === 'collection' || asset.type === 'tileset') {
     return { ...asset, id, name, relativePath }
   }
   return {
@@ -1025,9 +1170,9 @@ function remapAssetReferences(asset: Asset, idMap: Map<string, string>): Asset {
       }
     }
   }
-  if (asset.type === 'panel') return { ...asset, imageId: remapId(asset.imageId, idMap) }
+  if (asset.type === 'panel' || asset.type === 'tileset') return { ...asset, imageId: remapId(asset.imageId, idMap) }
   if (asset.type === 'book') return remapBook(asset, idMap)
-  if (asset.type === 'menu' || asset.type === 'composite') {
+  if (asset.type === 'menu' || asset.type === 'composite' || asset.type === 'scene') {
     return {
       ...asset,
       scriptId: remapId(asset.scriptId, idMap),
@@ -1042,6 +1187,9 @@ function remapComponent(component: MenuComponent, idMap: Map<string, string>): M
   if (component.type === 'image') return { ...component, scriptId, imageId: remapId(component.imageId, idMap) }
   if (component.type === 'button') return { ...component, scriptId, buttonId: remapId(component.buttonId, idMap) }
   if (component.type === 'composite') return { ...component, scriptId, compositeId: remapId(component.compositeId, idMap) }
+  if (component.type === 'sceneViewer') return { ...component, scriptId, sceneId: remapId(component.sceneId, idMap) }
+  if (component.type === 'tile' || component.type === 'tilemap') return { ...component, scriptId, tilesetId: remapId(component.tilesetId, idMap) }
+  if (component.type === 'collider') return { ...component, scriptId }
   return { ...component, scriptId, panelId: remapId(component.panelId, idMap) }
 }
 

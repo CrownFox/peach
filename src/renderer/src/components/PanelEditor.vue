@@ -32,6 +32,8 @@ const nodes = computed(() => {
       relativePath: '',
       width: 320,
       height: 180,
+      gridSize: 16,
+      snapToGrid: false,
       scriptId: null,
       script: '',
       components: [

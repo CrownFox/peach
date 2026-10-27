@@ -26,20 +26,21 @@ describe('script suggestions', () => {
     expect(play).toContain('text')
     expect(play).toContain('enabled')
     expect(play).not.toContain('image')
-    expect(scriptSuggestions('game.currentMenu.portrait.', menu).map((item) => item.label)).toEqual(['image', 'click', 'visible', 'color'])
+    expect(scriptSuggestions('game.currentMenu.portrait.', menu).map((item) => item.label)).toEqual(['image', 'click', 'x', 'y', 'visible', 'color'])
   })
 
   it('suggests value on a text component and not a click', () => {
     const text: ScriptHints = { self: 'text', handles: [] }
-    expect(scriptSuggestions('self.', text).map((item) => item.label)).toEqual(['value', 'panel', 'visible', 'color'])
+    expect(scriptSuggestions('self.', text).map((item) => item.label)).toEqual(['value', 'panel', 'x', 'y', 'visible', 'color'])
     expect(scriptSuggestions('self:', text)).toEqual([])
   })
 
   it('suggests self from the script’s point of view', () => {
     expect(scriptSuggestions('self.', menu).map((item) => item.label)).toEqual(['play', 'portrait'])
     expect(scriptSuggestions('self.', button).map((item) => item.label)).toContain('defaultImage')
+    expect(scriptSuggestions('self.', button).map((item) => item.label)).toContain('x')
     expect(scriptSuggestions('self:', button).map((item) => item.label)).toEqual(['click'])
-    expect(scriptSuggestions('self:', menu)).toEqual([])
+    expect(scriptSuggestions('self:', menu).map((item) => item.label)).toEqual(['collisionAt'])
   })
 
   it('suggests openMenu as a call and string library functions', () => {
@@ -59,6 +60,8 @@ describe('script suggestions', () => {
     expect(registerKey?.insertText).toBe('registerKey(${1:BTN_A}, "${2:down}", ${3:onKey})')
     const saveSlot = scriptSuggestions('game.', menu).find((item) => item.label === 'saveSlot')
     expect(saveSlot?.insertText).toBe('saveSlot(${1:1})')
+    expect(scriptSuggestions('', menu).map((item) => item.label)).toContain('onUpdate')
+    expect(scriptSuggestions('game.', menu).map((item) => item.label)).toContain('keyDown')
     expect(scriptSuggestions('game.', menu).map((item) => item.label)).toContain('importCustomSaves')
     expect(scriptSuggestions('', menu).map((item) => item.label)).toContain('BTN_SPACE')
     expect(scriptSuggestions('', menu).map((item) => item.label)).not.toContain('closeModal')

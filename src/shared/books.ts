@@ -81,7 +81,7 @@ export function findPage(book: Pick<BookAsset, 'chapters'>, path: string): { cha
   return { chapter, page }
 }
 
-const ASSET_PAGE_TYPES = new Set<AssetType>(['menu', 'button', 'image', 'script', 'panel', 'collection', 'book', 'composite'])
+const ASSET_PAGE_TYPES = new Set<AssetType>(['menu', 'button', 'image', 'script', 'panel', 'collection', 'book', 'composite', 'scene', 'tileset'])
 
 export const PAGE_VALUE_TYPES: { type: PageFieldType; label: string }[] = [
   { type: 'text', label: 'Text' },
@@ -94,6 +94,8 @@ export const PAGE_VALUE_TYPES: { type: PageFieldType; label: string }[] = [
   { type: 'collection', label: 'Collection' },
   { type: 'book', label: 'Book' },
   { type: 'composite', label: 'Composite' },
+  { type: 'scene', label: 'Scene' },
+  { type: 'tileset', label: 'Tileset' },
   { type: 'bookPage', label: 'Book+Page' }
 ]
 

@@ -9,7 +9,7 @@ export type ScriptHandle = {
 
 export type ScriptHints = {
   handles: ScriptHandle[]
-  self: 'menu' | MenuComponent['type'] | 'any'
+  self: 'menu' | 'scene' | MenuComponent['type'] | 'any'
   parent?: 'pageViewer'
   suggestProperties?: boolean
   propertySources?: string[]
@@ -76,7 +76,39 @@ const fieldsByType: Record<MenuComponent['type'], Suggestion[]> = {
     { label: 'resume', insertText: 'resume()', kind: 'function', detail: 'Continue a paused stream' },
     { label: 'finish', insertText: 'finish()', kind: 'function', detail: 'Show the rest of the page immediately' }
   ],
-  composite: [{ label: 'enabled', insertText: 'enabled', kind: 'field', detail: 'true or false. False leaves the pieces inside unclickable' }]
+  composite: [{ label: 'enabled', insertText: 'enabled', kind: 'field', detail: 'true or false. False leaves the pieces inside unclickable' }],
+  sceneViewer: [
+    { label: 'viewX', insertText: 'viewX', kind: 'field', detail: 'Left edge of the view, in scene pixels' },
+    { label: 'viewY', insertText: 'viewY', kind: 'field', detail: 'Top edge of the view, in scene pixels' },
+    { label: 'scale', insertText: 'scale', kind: 'field', detail: 'Whole number. 2 draws each scene pixel as 2 by 2' },
+    { label: 'width', insertText: 'width', kind: 'field', detail: 'Scene pixels visible across the view. It follows the scale' },
+    { label: 'height', insertText: 'height', kind: 'field', detail: 'Scene pixels visible down the view. It follows the scale' },
+    { label: 'scene', insertText: 'scene', kind: 'field', detail: 'Scene path' }
+  ],
+  tile: [
+    { label: 'setTile', insertText: 'setTile(${1:tileset}, ${2:x}, ${3:y})', kind: 'function', detail: 'Show one tile from a tileset. The chosen cell lands on this tile, and a merged picture hangs off it' },
+    { label: 'tileset', insertText: 'tileset', kind: 'field', detail: 'Tileset path' },
+    { label: 'tileX', insertText: 'tileX', kind: 'field', detail: 'Column in the tileset. 0 is the left column' },
+    { label: 'tileY', insertText: 'tileY', kind: 'field', detail: 'Row in the tileset. 0 is the top row' }
+  ],
+  tilemap: [
+    { label: 'getTile', insertText: 'getTile(${1:x}, ${2:y})', kind: 'function', detail: 'Tileset path, column, and row at a cell. Nil when that cell is empty' },
+    { label: 'setTile', insertText: 'setTile(${1:x}, ${2:y}, ${3:column}, ${4:row})', kind: 'function', detail: 'Paint a tile from this map\'s tileset. The chosen cell lands on the map cell' },
+    { label: 'tileset', insertText: 'tileset', kind: 'field', detail: 'Tileset path' }
+  ],
+  collider: [
+    { label: 'collisionWith', insertText: 'collisionWith({${1:"solid"}})', kind: 'function', detail: 'Other colliders on this canvas that overlap and have any of these tags' },
+    { label: 'tags', insertText: 'tags', kind: 'field', detail: 'Names on this collider, such as solid or hurt' },
+    { label: 'shape', insertText: 'shape', kind: 'field', detail: '"square" or "circle"' },
+    { label: 'enabled', insertText: 'enabled', kind: 'field', detail: 'true or false. False skips this collider' }
+  ]
+}
+
+const collisionAtField: Suggestion = {
+  label: 'collisionAt',
+  insertText: 'collisionAt(${1:x}, ${2:y}, {${3:"solid"}})',
+  kind: 'function',
+  detail: 'Colliders on this canvas that contain the point and have any of these tags'
 }
 
 const componentTypes = Object.keys(fieldsByType) as MenuComponent['type'][]
@@ -90,9 +122,10 @@ const libraries: Record<string, Suggestion[]> = {
 
 const globals: Suggestion[] = [
   { label: 'game', insertText: 'game', kind: 'field', detail: 'The game API' },
-  { label: 'self', insertText: 'self', kind: 'field', detail: 'The menu or composite during onLoad, or this component in onChange and onInteract' },
+  { label: 'self', insertText: 'self', kind: 'field', detail: 'The menu, scene, or composite during onLoad and onUpdate, or this component in onChange and onInteract' },
   { label: 'print', insertText: 'print(', kind: 'function', detail: 'Write to the game console' },
-  { label: 'onLoad', insertText: 'onLoad', kind: 'function', detail: 'Called when a menu or composite opens' },
+  { label: 'onLoad', insertText: 'onLoad', kind: 'function', detail: 'Called when a menu, scene, or composite opens' },
+  { label: 'onUpdate', insertText: 'onUpdate', kind: 'function', detail: 'Called every frame while a menu, scene, or composite is on screen' },
   { label: 'onInteract', insertText: 'onInteract', kind: 'function', detail: 'Called when a button or image is clicked' },
   { label: 'onChange', insertText: 'onChange', kind: 'function', detail: 'Called when the player edits an input' },
   { label: 'function', insertText: 'function ${1:name}()\n\t$0\nend', kind: 'snippet', detail: 'Define a function' },
@@ -141,6 +174,7 @@ function members(member: { chain: string[]; colon: boolean }, hints: ScriptHints
       { label: 'loadBook', insertText: 'loadBook("${1}")', kind: 'snippet', detail: 'Load a book by path' },
       { label: 'loadPage', insertText: 'loadPage(${1:viewer}, ${2:bookPage})', kind: 'function', detail: 'Show a book and page on a page viewer' },
       { label: 'registerKey', insertText: 'registerKey(${1:BTN_A}, "${2:down}", ${3:onKey})', kind: 'function', detail: 'Listen for a key while this menu is on screen' },
+      { label: 'keyDown', insertText: 'keyDown(${1:BTN_A})', kind: 'function', detail: 'True while a key is held' },
       { label: 'saveSlot', insertText: 'saveSlot(${1:1})', kind: 'function', detail: 'Save the game into a slot' },
       { label: 'loadSlot', insertText: 'loadSlot(${1:1})', kind: 'function', detail: 'Load a slot and open that menu' },
       { label: 'slotInfo', insertText: 'slotInfo(${1:1})', kind: 'function', detail: 'Icon and time for a slot, or nil' },
@@ -153,17 +187,17 @@ function members(member: { chain: string[]; colon: boolean }, hints: ScriptHints
       { label: 'exportCustomSaves', insertText: 'exportCustomSaves()', kind: 'function', detail: 'Write every custom slot to a file' }
     ]
   }
-  if (chain[0] === 'game' && chain[1] === 'currentMenu' && chain.length === 2 && !colon) return handleSuggestions(hints)
+  if (chain[0] === 'game' && chain[1] === 'currentMenu' && chain.length === 2) return colon ? [collisionAtField] : handleSuggestions(hints)
   if (chain[0] === 'game' && chain[1] === 'currentMenu' && chain.length === 3) {
     return componentFields(typesFor(chain[2] ?? '', hints), colon)
   }
-  if (chain[0] === 'game' && chain[1] === 'currentModal' && chain.length === 2 && !colon) return handleSuggestions(hints)
+  if (chain[0] === 'game' && chain[1] === 'currentModal' && chain.length === 2) return colon ? [collisionAtField] : handleSuggestions(hints)
   if (chain[0] === 'game' && chain[1] === 'currentModal' && chain.length === 3) {
     return componentFields(typesFor(chain[2] ?? '', hints), colon)
   }
   if (chain.length === 1 && chain[0] === 'parent' && hints.parent) return componentFields([hints.parent], colon)
   if (chain.length === 1 && chain[0] === 'self') {
-    if (hints.self === 'menu') return colon ? [] : handleSuggestions(hints)
+    if (hints.self === 'menu' || hints.self === 'scene') return colon ? [collisionAtField] : handleSuggestions(hints)
     if (hints.self === 'composite') {
       if (colon) return []
       const children = handleSuggestions(hints)
@@ -235,6 +269,8 @@ function componentFields(types: readonly MenuComponent['type'][], methodsOnly: b
   const items = types.flatMap((type) => fieldsByType[type] ?? [])
   const chosen = methodsOnly ? items.filter((item) => item.kind === 'function') : items
   if (!methodsOnly) {
+    chosen.push({ label: 'x', insertText: 'x', kind: 'field', detail: 'Horizontal position, in the same pixels as the editor' })
+    chosen.push({ label: 'y', insertText: 'y', kind: 'field', detail: 'Vertical position, in the same pixels as the editor' })
     chosen.push({ label: 'visible', insertText: 'visible', kind: 'field', detail: 'true or false. False hides this component' })
     chosen.push({ label: 'color', insertText: 'color', kind: 'field', detail: 'A color such as "#ff8800". White leaves the component unchanged' })
   }

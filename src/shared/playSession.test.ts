@@ -3,7 +3,7 @@ import { PlaySession } from './playSession'
 import { createAsset, createMenuComponent, createPageViewerComponent } from './assets'
 import { encodeBookPage, plainMarks } from './books'
 import { documentText, emptyDocument, memorySavePort, parseDocument } from './saves'
-import type { Asset, BookAsset, ButtonAsset, CollectionAsset, CompositeAsset, ImageAsset, MenuAsset, MenuComponent } from './types'
+import type { Asset, BookAsset, ButtonAsset, CollectionAsset, CompositeAsset, ImageAsset, MenuAsset, MenuComponent, SceneAsset } from './types'
 
 function image(id: string, name: string, relativePath: string): ImageAsset {
   return { id, type: 'image', name, relativePath, file: `${name}.png`, width: 32, height: 32, format: 'png' }
@@ -55,6 +55,8 @@ function menu(id: string, relativePath: string, script: string, components: Menu
     relativePath,
     width: 880,
     height: 495,
+    gridSize: 16,
+    snapToGrid: false,
     scriptId: null,
     script,
     components
@@ -819,6 +821,285 @@ describe('play session', () => {
     expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
   })
 
+  it('moves a component from onUpdate and stops after one error', () => {
+    const play = button('play', 'play')
+    play.x = 10
+    const main = menu(
+      'main',
+      'Main Menu.menu.json',
+      `function onUpdate(dt)
+        self.play.x = self.play.x + 100 * dt
+      end`,
+      [play]
+    )
+    const session = start([main, plate, plateButton], 'main')
+    session.tick(50)
+    expect(session.currentOverrides().play?.x).toBe(15)
+    session.tick(1000)
+    expect(session.currentOverrides().play?.x).toBe(25)
+    session.tick(0)
+    expect(session.currentOverrides().play?.x).toBe(25)
+
+    const restored = menu(
+      'restored',
+      'Restored.menu.json',
+      `function onLoad()
+        self.play.x = 40
+        self.play.x = nil
+      end`,
+      [button('play', 'play')]
+    )
+    const reset = start([restored, plate, plateButton], 'restored')
+    expect(reset.currentOverrides().play?.x).toBeUndefined()
+
+    const broken = menu(
+      'broken',
+      'Broken.menu.json',
+      `function onUpdate(dt)
+        self.play.x = 4
+        error("boom")
+      end`,
+      [button('play', 'play', `function onInteract() game.openMenu("Broken") end`)]
+    )
+    const failing = start([broken, plate, plateButton], 'broken')
+    failing.tick(16)
+    failing.tick(16)
+    expect(failing.currentOverrides().play?.x).toBe(4)
+    expect(failing.logs.filter((entry) => entry.tone === 'error')).toHaveLength(1)
+    failing.activate('play')
+    failing.tick(16)
+    expect(failing.currentOverrides().play?.x).toBe(4)
+    expect(failing.logs.filter((entry) => entry.tone === 'error')).toHaveLength(2)
+  })
+
+  it('runs onUpdate on the modal and resumes the menu when the modal closes', () => {
+    const confirm = menu(
+      'confirm',
+      'Confirm.menu.json',
+      `function onUpdate(dt)
+        print("modal")
+      end`,
+      [button('ok', 'ok', `function onInteract() game.closeModal(game.currentModal) end`)]
+    )
+    const main = menu(
+      'main',
+      'Main Menu.menu.json',
+      `function onLoad()
+        game.openModal("Confirm")
+      end
+      function onUpdate(dt)
+        self.play.x = self.play.x + 10
+      end`,
+      [button('play', 'play')]
+    )
+    const session = start([main, confirm, plate, plateButton], 'main')
+    session.tick(16)
+    expect(session.currentOverrides().play?.x).toBeUndefined()
+    expect(session.logs.map((entry) => entry.text)).toEqual(['modal'])
+    session.activate('ok')
+    session.tick(16)
+    expect(session.currentOverrides().play?.x).toBe(10)
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('reports a held key and stays quiet while typing', () => {
+    const main = menu(
+      'main',
+      'Main Menu.menu.json',
+      `function onUpdate(dt)
+        if game.keyDown(BTN_A) then print("held") end
+      end`,
+      []
+    )
+    const session = start([main, plate, plateButton], 'main')
+    session.pressKey('KeyA', 'down')
+    session.tick(16)
+    session.setTyping(true)
+    session.tick(16)
+    session.setTyping(false)
+    session.pressKey('KeyA', 'up')
+    session.tick(16)
+    expect(session.logs.map((entry) => entry.text)).toEqual(['held'])
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('runs one scene update for every viewer and skips it when they are hidden', () => {
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    town.script = `function onUpdate(dt)
+      self.hero.x = self.hero.x + 10
+    end`
+    town.components = [button('hero', 'hero', `function onInteract() print("hit") end`)]
+    const camera = createMenuComponent('sceneViewer', [])
+    const other = createMenuComponent('sceneViewer', [])
+    camera.id = 'camera'
+    camera.handle = 'camera'
+    other.id = 'other'
+    other.handle = 'other'
+    if (camera.type === 'sceneViewer') camera.sceneId = 'town'
+    if (other.type === 'sceneViewer') other.sceneId = 'town'
+    const main = menu(
+      'main',
+      'Main Menu.menu.json',
+      `function onLoad()
+        game.currentMenu.other.visible = false
+        game.currentMenu.camera.viewX = 12
+      end`,
+      [camera, other]
+    )
+    const session = start([main, town, plate, plateButton], 'main')
+    expect(session.currentOverrides().camera?.viewX).toBe(12)
+    session.tick(16)
+    expect(session.currentOverrides()['scene:town/hero']?.x).toBe(10)
+    session.activate('camera::hero')
+    expect(session.logs.map((entry) => entry.text)).toEqual(['hit'])
+    const hiding = menu(
+      'hiding',
+      'Hiding.menu.json',
+      `function onLoad()
+        game.currentMenu.camera.visible = false
+      end`,
+      [camera]
+    )
+    const quiet = start([hiding, town, plate, plateButton], 'hiding')
+    quiet.tick(16)
+    expect(quiet.currentOverrides()['scene:town/hero']?.x).toBeUndefined()
+    expect(quiet.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('reports the visible scene size from the viewer width and height', () => {
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    town.script = `function onUpdate(dt)
+      local view = game.currentMenu.camera
+      view.viewX = view.width
+      view.viewY = view.height
+    end`
+    town.components = []
+    const open = (scaleWithViewer: boolean, displayScale: number): PlaySession => {
+      const camera = createMenuComponent('sceneViewer', [])
+      if (camera.type !== 'sceneViewer') throw new Error('scene viewer')
+      camera.id = 'camera'
+      camera.handle = 'camera'
+      camera.sceneId = 'town'
+      camera.width = 200
+      camera.height = 100
+      camera.scale = 2
+      camera.scaleWithViewer = scaleWithViewer
+      const session = start([menu('main', 'Main Menu.menu.json', '', [camera]), town], 'main')
+      session.setDisplayScale(displayScale)
+      session.tick(16)
+      return session
+    }
+    const fitted = open(true, 2)
+    expect(fitted.currentOverrides().camera?.viewX).toBe(100)
+    expect(fitted.currentOverrides().camera?.viewY).toBe(50)
+    const locked = open(false, 2)
+    expect(locked.currentOverrides().camera?.viewX).toBe(200)
+    expect(locked.currentOverrides().camera?.viewY).toBe(100)
+    const still = open(false, 1)
+    expect(still.currentOverrides().camera?.viewX).toBe(100)
+    expect(still.currentOverrides().camera?.viewY).toBe(50)
+    expect(still.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('moves a composite by its x inside a scene viewer', () => {
+    const badge = createAsset('composite', 'Badge', 'Badge.composite.json', 'badge') as CompositeAsset
+    const hero = createMenuComponent('composite', [])
+    if (hero.type !== 'composite') throw new Error('composite')
+    hero.id = 'hero'
+    hero.handle = 'hero'
+    hero.x = 10
+    hero.compositeId = 'badge'
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    town.components = [hero]
+    const camera = createMenuComponent('sceneViewer', [])
+    if (camera.type !== 'sceneViewer') throw new Error('scene viewer')
+    camera.id = 'camera'
+    camera.handle = 'camera'
+    camera.sceneId = 'town'
+    const slot = createMenuComponent('composite', [])
+    if (slot.type !== 'composite') throw new Error('composite')
+    slot.id = 'slot'
+    slot.handle = 'slot'
+    slot.x = 3
+    slot.compositeId = 'badge'
+    const session = start(
+      [
+        menu(
+          'main',
+          'Explore Menu.menu.json',
+          `function onUpdate(dt)
+            local hero = game.currentMenu.camera.hero
+            hero.x = hero.x + 5
+            self.slot.x = self.slot.x + 7
+          end`,
+          [camera, slot]
+        ),
+        town,
+        badge,
+        plate,
+        plateButton
+      ],
+      'main'
+    )
+    session.tick(16)
+    expect(session.currentOverrides()['scene:town/hero']?.x).toBe(15)
+    expect(session.currentOverrides().slot?.x).toBe(10)
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('runs onUpdate for each composite copy and stops that copy after one error', () => {
+    const badge = createAsset('composite', 'Badge', 'Badge.composite.json', 'badge') as CompositeAsset
+    const mark = button('mark', 'mark')
+    badge.components = [mark]
+    badge.script = `function onUpdate(dt)
+      self.mark.x = self.mark.x + 4
+    end`
+    const slot = createMenuComponent('composite', [])
+    const other = createMenuComponent('composite', [])
+    if (slot.type !== 'composite' || other.type !== 'composite') throw new Error('composite')
+    slot.id = 'slot'
+    slot.handle = 'slot'
+    slot.compositeId = 'badge'
+    other.id = 'other'
+    other.handle = 'other'
+    other.compositeId = 'badge'
+    const session = start(
+      [
+        menu(
+          'main',
+          'Main Menu.menu.json',
+          `function onLoad()
+            game.currentMenu.slot.visible = false
+          end`,
+          [slot, other]
+        ),
+        badge,
+        plate,
+        plateButton
+      ],
+      'main'
+    )
+    session.tick(16)
+    expect(session.currentOverrides()['slot/mark']?.x).toBe(4)
+    expect(session.currentOverrides()['other/mark']?.x).toBe(4)
+    const broken = createAsset('composite', 'Badge', 'Badge.composite.json', 'badge') as CompositeAsset
+    broken.components = [button('mark', 'mark')]
+    broken.script = `function onUpdate(dt)
+      error("boom")
+    end`
+    const one = createMenuComponent('composite', [])
+    if (one.type !== 'composite') throw new Error('composite')
+    one.id = 'slot'
+    one.handle = 'slot'
+    one.compositeId = 'badge'
+    const failing = start([menu('main', 'Main Menu.menu.json', '', [one]), broken, plate, plateButton], 'main')
+    failing.tick(16)
+    failing.tick(16)
+    expect(failing.currentOverrides()['slot/mark']?.x).toBeUndefined()
+    expect(failing.logs.filter((entry) => entry.tone === 'error')).toHaveLength(1)
+    expect(failing.logs.find((entry) => entry.tone === 'error')?.text).toContain('Badge onUpdate')
+  })
+
   it('runs only the top modal keys until that modal closes', () => {
     const confirm = menu(
       'confirm',
@@ -1232,6 +1513,142 @@ end`
     session.activate('filled')
     session.activate('blank')
     expect(session.logs.map((entry) => entry.text)).toEqual(['set', 'empty'])
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('reads a tilemap cell and paints another without changing the saved map', () => {
+    const picture = image('img', 'Dungeon', 'Dungeon.image.json')
+    picture.width = 64
+    picture.height = 64
+    const tileset = createAsset('tileset', 'Dungeon', 'tiles/Dungeon.tileset.json', 'dungeon')
+    if (tileset.type !== 'tileset') throw new Error('tileset')
+    tileset.imageId = 'img'
+    tileset.tileWidth = 32
+    tileset.tileHeight = 32
+    const map = createMenuComponent('tilemap', [])
+    if (map.type !== 'tilemap') throw new Error('tilemap')
+    map.id = 'ground'
+    map.handle = 'ground'
+    map.tilesetId = 'dungeon'
+    map.width = 64
+    map.height = 32
+    map.cells = [{ x: 0, y: 0, tileX: 0, tileY: 1 }]
+    const mark = createMenuComponent('image', [])
+    mark.id = 'mark'
+    mark.handle = 'mark'
+    const icon = createMenuComponent('tile', [])
+    if (icon.type !== 'tile') throw new Error('tile')
+    icon.id = 'icon'
+    icon.handle = 'icon'
+    icon.tilesetId = 'dungeon'
+    const main = menu(
+      'main',
+      'Explore Menu.menu.json',
+      `function onUpdate(dt)
+        local path, column, row = self.ground:getTile(0, 0)
+        self.mark.x = column
+        self.mark.y = row
+        self.ground:setTile(1, 0, 1, 0)
+        self.icon:setTile("tiles/Dungeon", 1, 0)
+      end`,
+      [map, mark, icon]
+    )
+    const session = start([main, picture, tileset], 'main')
+    session.tick(16)
+    expect(session.currentOverrides().mark?.x).toBe(0)
+    expect(session.currentOverrides().mark?.y).toBe(1)
+    expect(session.currentOverrides().ground?.cells).toEqual([
+      { x: 0, y: 0, tileX: 0, tileY: 1 },
+      { x: 1, y: 0, tileX: 1, tileY: 0 }
+    ])
+    expect(map.cells).toEqual([{ x: 0, y: 0, tileX: 0, tileY: 1 }])
+    expect(session.currentOverrides().icon).toMatchObject({ tilesetRef: 'tiles/Dungeon', tileX: 1, tileY: 0 })
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('checks collider overlap on a menu without seeing the scene behind a viewer', () => {
+    const hero = createMenuComponent('collider', [])
+    const solid = createMenuComponent('collider', [])
+    if (hero.type !== 'collider' || solid.type !== 'collider') throw new Error('collider')
+    hero.id = 'hero'
+    hero.handle = 'hero'
+    hero.tags = ['body']
+    hero.x = 0
+    hero.y = 0
+    hero.width = 40
+    hero.height = 40
+    solid.id = 'solid'
+    solid.handle = 'solid'
+    solid.tags = ['solid']
+    solid.x = 20
+    solid.y = 0
+    solid.width = 40
+    solid.height = 40
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    const wall = createMenuComponent('collider', [])
+    const other = createMenuComponent('collider', [])
+    if (wall.type !== 'collider' || other.type !== 'collider') throw new Error('collider')
+    wall.id = 'wall'
+    wall.handle = 'wall'
+    wall.tags = ['scene']
+    wall.x = 0
+    wall.y = 0
+    wall.width = 20
+    wall.height = 20
+    other.id = 'other'
+    other.handle = 'other'
+    other.tags = ['scene']
+    other.x = 10
+    other.y = 0
+    other.width = 20
+    other.height = 20
+    town.components = [wall, other]
+    town.script = `function onUpdate(dt)
+      local hits = self.wall:collisionWith({"scene"})
+      print("scene hits " .. #hits)
+      print("scene x " .. string.format("%d", hits[1].x))
+      print("scene at " .. #self:collisionAt(4, 4, {"scene"}))
+      print("scene menu " .. #self:collisionAt(4, 4, {"menu"}))
+    end`
+    const camera = createMenuComponent('sceneViewer', [])
+    if (camera.type !== 'sceneViewer') throw new Error('scene viewer')
+    camera.id = 'camera'
+    camera.handle = 'camera'
+    camera.sceneId = 'town'
+    const main = menu(
+      'main',
+      'Explore Menu.menu.json',
+      `function onUpdate(dt)
+        local hits = self.hero:collisionWith({"solid"})
+        print("menu hits " .. #hits)
+        print("menu x " .. string.format("%d", hits[1].x))
+        print("menu y " .. string.format("%d", hits[1].y))
+        print("menu tag " .. hits[1].collider.tags[1])
+        print("menu at " .. #self:collisionAt(24, 4, {"solid"}))
+        print("menu scene " .. #self:collisionAt(4, 4, {"scene"}))
+        print("menu none " .. #self.hero:collisionWith({}))
+        self.solid.x = 100
+        print("menu moved " .. #self.hero:collisionWith({"solid"}))
+      end`,
+      [hero, solid, camera]
+    )
+    const session = start([main, town], 'main')
+    session.tick(16)
+    expect(session.logs.map((entry) => entry.text)).toEqual([
+      'menu hits 1',
+      'menu x 20',
+      'menu y 0',
+      'menu tag solid',
+      'menu at 1',
+      'menu scene 0',
+      'menu none 0',
+      'menu moved 0',
+      'scene hits 1',
+      'scene x 10',
+      'scene at 1',
+      'scene menu 0'
+    ])
+    expect(session.currentOverrides().solid?.x).toBe(100)
     expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
   })
 })

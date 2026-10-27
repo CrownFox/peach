@@ -84,8 +84,9 @@ async function load(container: HTMLElement): Promise<void> {
     const fitted = fitFrame(container.clientWidth, container.clientHeight, menu.width, menu.height)
     stage.style.width = `${fitted.width}px`
     stage.style.height = `${fitted.height}px`
+    const displayScale = menu.width > 0 ? fitted.width / menu.width : 1
     const modalOpen = session.modals.length > 0
-    syncScene(scene, buildScene(menu, assets, { pressedId, overrides: session.currentOverrides(), pages: session.pages }), (path) => encodeRelative(path), {
+    syncScene(scene, buildScene(menu, assets, { pressedId, overrides: session.currentOverrides(), pages: session.pages, displayScale }), (path) => encodeRelative(path), {
       interactive: !modalOpen,
       onPressStart: (id) => {
         pressedId = id
@@ -118,7 +119,8 @@ async function load(container: HTMLElement): Promise<void> {
       const modalFit = fitFrame(container.clientWidth, container.clientHeight, modal.width, modal.height)
       host.stage.style.width = `${modalFit.width}px`
       host.stage.style.height = `${modalFit.height}px`
-      syncScene(host.scene, buildScene(modal, assets, { pressedId, overrides: frame.overrides, pages: session.pages }), (path) => encodeRelative(path), {
+      const modalScale = modal.width > 0 ? modalFit.width / modal.width : 1
+      syncScene(host.scene, buildScene(modal, assets, { pressedId, overrides: frame.overrides, pages: session.pages, displayScale: modalScale }), (path) => encodeRelative(path), {
         interactive: index === session.modals.length - 1,
         onPressStart: (id) => {
           pressedId = id
@@ -144,21 +146,35 @@ async function load(container: HTMLElement): Promise<void> {
     draw()
   })
   const onKey = (event: KeyboardEvent): void => {
-    const action = keyAction(event.type, event.repeat, event.code, isTypingTarget(event.target))
+    const typing = isTypingTarget(event.target)
+    session.setTyping(typing)
+    const action = keyAction(event.type, event.repeat, event.code, false)
     if (!action) return
-    if (session.pressKey(action.code, action.edge, action.fire)) event.preventDefault()
+    const handled = session.pressKey(action.code, action.edge, action.fire && !typing)
+    if (!typing && handled) event.preventDefault()
   }
   window.addEventListener('keydown', onKey)
   window.addEventListener('keyup', onKey)
+  const publishScale = (): void => {
+    const top = session.modals.at(-1) ?? session.frames[session.index]
+    const asset = menuById(top?.menuId) ?? entry
+    const fitted = fitFrame(container.clientWidth, container.clientHeight, asset.width, asset.height)
+    session.setDisplayScale(asset.width > 0 && fitted.width > 0 ? fitted.width / asset.width : 1)
+  }
   let clockAt = 0
   const onFrame = (now: number): void => {
     requestAnimationFrame(onFrame)
-    if (clockAt > 0) session.advanceText(now - clockAt)
+    if (clockAt > 0) {
+      publishScale()
+      session.setTyping(isTypingTarget(document.activeElement))
+      session.tick(now - clockAt)
+    }
     clockAt = now
   }
   requestAnimationFrame(onFrame)
   new ResizeObserver(() => draw()).observe(container)
   watchDevicePixels(() => draw())
+  publishScale()
   session.reset(entry.id)
 }
 

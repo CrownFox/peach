@@ -5,6 +5,7 @@ import { usePlayStore } from '@/stores/play'
 import { useProjectStore } from '@/stores/project'
 import { useSessionStore } from '@/stores/session'
 import { GAME_PROPERTIES_WINDOW } from '@shared/workspace'
+import { isCanvas } from '@shared/types'
 import AssetBrowser from './components/AssetBrowser.vue'
 import BookEditor from './components/BookEditor.vue'
 import CollectionEditor from './components/CollectionEditor.vue'
@@ -34,6 +35,12 @@ const openComposites = computed(() =>
   project.workspace.openCompositeIds.flatMap((id) => {
     const asset = project.asset(id)
     return asset?.type === 'composite' ? [asset] : []
+  })
+)
+const openScenes = computed(() =>
+  project.workspace.openSceneIds.flatMap((id) => {
+    const asset = project.asset(id)
+    return asset?.type === 'scene' ? [asset] : []
   })
 )
 const openCollections = computed(() =>
@@ -90,11 +97,15 @@ function scriptTitle(key: string): string {
     const asset = project.asset(key.slice(10))
     return asset ? `${asset.name} script` : 'Script'
   }
+  if (key.startsWith('scene:')) {
+    const asset = project.asset(key.slice(6))
+    return asset ? `${asset.name} script` : 'Script'
+  }
   if (key.startsWith('doodad:')) return 'Insert script'
   if (key.startsWith('pagescript:')) return 'Page script'
   const [, menuId, componentId] = key.split(':')
   const menu = project.asset(menuId ?? null)
-  const component = menu && (menu.type === 'menu' || menu.type === 'composite') ? menu.components.find((item) => item.id === componentId) : null
+  const component = menu && isCanvas(menu) ? menu.components.find((item) => item.id === componentId) : null
   return component ? `${component.name} script` : 'Script'
 }
 </script>
@@ -168,6 +179,17 @@ function scriptTitle(key: string): string {
             <span class="tab-close" @click.stop="project.closeComposite(item.id)">×</span>
           </button>
           <button
+            v-for="item in openScenes"
+            :key="item.id"
+            class="tab"
+            :class="{ active: project.workspace.activeTab === `scene:${item.id}` }"
+            type="button"
+            @click="project.setTab(`scene:${item.id}`)"
+          >
+            <span>{{ tabTitle(item.id) }}</span>
+            <span class="tab-close" @click.stop="project.closeScene(item.id)">×</span>
+          </button>
+          <button
             v-for="item in openCollections"
             :key="item.id"
             class="tab"
@@ -213,6 +235,12 @@ function scriptTitle(key: string): string {
           <MenuEditor
             v-for="item in openComposites"
             v-show="project.workspace.activeTab === `composite:${item.id}`"
+            :key="item.id"
+            :menu-id="item.id"
+          />
+          <MenuEditor
+            v-for="item in openScenes"
+            v-show="project.workspace.activeTab === `scene:${item.id}`"
             :key="item.id"
             :menu-id="item.id"
           />

@@ -2,6 +2,7 @@ import { devicePixelScale, nineSliceLayout, snapNineSlice, type SceneControl, ty
 import type { DisplayBlock, DisplayRun } from './books'
 import type { PageMarks } from './types'
 import { installSceneStyles } from './sceneCss'
+import type { TileStamp } from './tiles'
 
 export type ControlValue = string | number | boolean | string[]
 
@@ -54,6 +55,8 @@ export function syncScene(
     if (!el) {
       el = document.createElement('div')
       el.dataset.nodeId = node.id
+      const body = document.createElement('div')
+      body.className = 'body'
       const face = document.createElement('div')
       face.className = 'face'
       const picture = document.createElement('img')
@@ -64,7 +67,8 @@ export function syncScene(
       missing.className = 'missing'
       const label = document.createElement('div')
       label.className = 'label'
-      el.append(face, picture, missing, label)
+      body.append(face, picture, missing, label)
+      el.append(body)
     }
     placeNode(container, el, index)
     el.style.zIndex = String(index + 1)
@@ -161,15 +165,17 @@ function paintNode(
   onValue: ((id: string, value: ControlValue, inputKey?: string) => void) | undefined,
   focus: PageFieldFocus | null
 ): void {
-  const face = el.querySelector('.face') as HTMLElement
-  const picture = el.querySelector('.picture') as HTMLImageElement
-  const missing = el.querySelector('.missing') as HTMLElement
-  const label = el.querySelector('.label') as HTMLElement
-  el.className = `scene-node kind-${node.kind}`
+  const body = nodeBody(el)
+  const face = body.querySelector('.face') as HTMLElement
+  const picture = body.querySelector('.picture') as HTMLImageElement
+  const missing = body.querySelector('.missing') as HTMLElement
+  const label = body.querySelector('.label') as HTMLElement
+  el.className = `scene-node kind-${node.kind}${node.crisp ? ' is-crisp' : ''}${node.crop ? ' has-crop' : ''}${node.flipX ? ' is-flip-x' : ''}${node.flipY ? ' is-flip-y' : ''}${node.colliderShape === 'circle' ? ' is-circle' : ''}`
   el.style.left = `${node.x}%`
   el.style.top = `${node.y}%`
   el.style.width = `${node.width}%`
   el.style.height = `${node.height}%`
+  el.style.clipPath = node.clip ?? ''
   const usesControl = node.visible && interactive && node.enabled && node.control !== null
   const usesPage = node.page !== null
   el.style.pointerEvents = node.visible && ((interactive && node.enabled && (node.kind === 'button' || node.kind === 'image')) || usesControl || (interactive && node.enabled && usesPage)) ? 'auto' : 'none'
@@ -190,14 +196,19 @@ function paintNode(
     label.style.display = 'none'
     label.textContent = ''
   }
-  paintFill(el, node)
-  paintControl(el, node, usesControl ? onValue : undefined)
-  paintPage(el, node, resolveUrl, interactive ? onValue : undefined, focus)
+  paintFill(body, node)
+  paintControl(body, node, usesControl ? onValue : undefined)
+  paintPage(body, node, resolveUrl, interactive ? onValue : undefined, focus)
 
   clearFace(face)
   const url = node.imagePath ? resolveUrl(node.imagePath) : ''
-  const tiled = url && !node.slices && node.imageFit === 'tile' && el.clientWidth > 0 && el.clientHeight > 0
-  if (url && node.slices && el.clientWidth > 0 && el.clientHeight > 0) {
+  const tiled = url && !node.sheet && !node.slices && node.imageFit === 'tile' && el.clientWidth > 0 && el.clientHeight > 0
+  if (url && node.sheet && node.sheet.length > 0) {
+    picture.style.display = 'none'
+    face.querySelector('canvas.tile')?.remove()
+    face.querySelector('canvas.nine')?.remove()
+    paintTileSheet(face, node.sheet, url)
+  } else if (url && node.slices && el.clientWidth > 0 && el.clientHeight > 0) {
     picture.style.display = 'none'
     paintNineSlice(face, el, node, url)
   } else if (tiled) {
@@ -210,6 +221,19 @@ function paintNode(
       picture.dataset.src = url
       picture.src = url
     }
+    if (node.crop && node.crop.width > 0 && node.crop.height > 0) {
+      picture.style.inset = 'auto'
+      picture.style.left = `${-(node.crop.x / node.crop.width) * 100}%`
+      picture.style.top = `${-(node.crop.y / node.crop.height) * 100}%`
+      picture.style.width = `${(node.crop.imageWidth / node.crop.width) * 100}%`
+      picture.style.height = `${(node.crop.imageHeight / node.crop.height) * 100}%`
+    } else {
+      picture.style.inset = '0'
+      picture.style.left = ''
+      picture.style.top = ''
+      picture.style.width = '100%'
+      picture.style.height = '100%'
+    }
   } else {
     picture.style.display = 'none'
     face.querySelector('canvas')?.remove()
@@ -218,13 +242,85 @@ function paintNode(
 
 const sliceImages = new Map<string, HTMLImageElement>()
 
-function ensureCanvas(face: HTMLElement, className: 'tile' | 'nine'): HTMLCanvasElement {
+function ensureCanvas(face: HTMLElement, className: 'tile' | 'nine' | 'sheet'): HTMLCanvasElement {
   const existing = face.querySelector(`canvas.${className}`)
   if (existing instanceof HTMLCanvasElement) return existing
   const canvas = document.createElement('canvas')
   canvas.className = className
   face.append(canvas)
   return canvas
+}
+
+function sheetSignature(stamps: readonly TileStamp[]): string {
+  let hash = 2166136261
+  for (const stamp of stamps) {
+    hash = Math.imul(hash ^ Math.round(stamp.x), 16777619)
+    hash = Math.imul(hash ^ Math.round(stamp.y), 16777619)
+    hash = Math.imul(hash ^ Math.round(stamp.width), 16777619)
+    hash = Math.imul(hash ^ Math.round(stamp.height), 16777619)
+    hash = Math.imul(hash ^ Math.round(stamp.crop.x), 16777619)
+    hash = Math.imul(hash ^ Math.round(stamp.crop.y), 16777619)
+    hash = Math.imul(hash ^ Math.round(stamp.crop.width), 16777619)
+    hash = Math.imul(hash ^ Math.round(stamp.crop.height), 16777619)
+  }
+  return `${stamps.length}:${hash >>> 0}`
+}
+
+function paintTileSheet(face: HTMLElement, stamps: readonly TileStamp[], url: string): void {
+  const canvas = ensureCanvas(face, 'sheet')
+  const signature = `${url}|${sheetSignature(stamps)}`
+  if (canvas.dataset.sig === signature) return
+  if (canvas.dataset.pending === signature) return
+  canvas.dataset.pending = signature
+  canvas.dataset.url = url
+  const draw = (): void => {
+    if (!canvas.isConnected || canvas.dataset.pending !== signature) return
+    const image = sliceImages.get(url)
+    if (!image || image.naturalWidth <= 0 || image.naturalHeight <= 0) return
+    drawTileSheet(canvas, image, stamps)
+    canvas.dataset.sig = signature
+  }
+  const image = sliceImages.get(url) ?? new Image()
+  if (!sliceImages.has(url)) {
+    image.src = url
+    sliceImages.set(url, image)
+  }
+  if (image.complete && image.naturalWidth > 0) draw()
+  else image.addEventListener('load', draw, { once: true })
+}
+
+function drawTileSheet(canvas: HTMLCanvasElement, image: HTMLImageElement, stamps: readonly TileStamp[]): void {
+  let width = 1
+  let height = 1
+  for (const stamp of stamps) {
+    width = Math.max(width, Math.round(stamp.x + stamp.width))
+    height = Math.max(height, Math.round(stamp.y + stamp.height))
+  }
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width
+    canvas.height = height
+  }
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.imageSmoothingEnabled = false
+  ctx.clearRect(0, 0, width, height)
+  for (const stamp of stamps) {
+    const dw = Math.round(stamp.width)
+    const dh = Math.round(stamp.height)
+    if (dw <= 0 || dh <= 0 || stamp.crop.width <= 0 || stamp.crop.height <= 0) continue
+    ctx.drawImage(
+      image,
+      stamp.crop.x,
+      stamp.crop.y,
+      stamp.crop.width,
+      stamp.crop.height,
+      Math.round(stamp.x),
+      Math.round(stamp.y),
+      dw,
+      dh
+    )
+  }
 }
 
 function paintTiledImage(face: HTMLElement, el: HTMLElement, url: string): void {
@@ -339,6 +435,16 @@ function drawNineSlice(canvas: HTMLCanvasElement, image: HTMLImageElement, el: H
       }
     }
   }
+}
+
+function nodeBody(el: HTMLElement): HTMLElement {
+  const found = el.querySelector<HTMLElement>(':scope > .body')
+  if (found) return found
+  const body = document.createElement('div')
+  body.className = 'body'
+  while (el.firstChild) body.append(el.firstChild)
+  el.append(body)
+  return body
 }
 
 function paintFill(el: HTMLElement, node: SceneNode): void {

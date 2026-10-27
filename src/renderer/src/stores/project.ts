@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { doodadScripts } from '@shared/books'
-import { clampRect, createMenuComponent, duplicateMenuComponent } from '@shared/assets'
+import { createMenuComponent, duplicateMenuComponent } from '@shared/assets'
 import { componentScriptTemplate } from '@shared/componentScript'
 import { joinPath } from '@shared/paths'
 import { buildTree, expandFolderPath } from '@shared/tree'
@@ -224,12 +224,15 @@ export const useProjectStore = defineStore('project', {
       } else if (asset.type === 'composite') {
         if (!this.workspace.openCompositeIds.includes(id)) this.workspace.openCompositeIds.push(id)
         this.workspace.activeTab = `composite:${id}`
+      } else if (asset.type === 'scene') {
+        if (!this.workspace.openSceneIds.includes(id)) this.workspace.openSceneIds.push(id)
+        this.workspace.activeTab = `scene:${id}`
       } else if (asset.type === 'script') {
         this.openScriptTab(`asset:${id}`)
         return
       } else {
-        const wide = asset.type === 'button' || asset.type === 'panel'
-        const height = asset.type === 'button' ? 700 : asset.type === 'panel' ? 640 : 520
+        const wide = asset.type === 'button' || asset.type === 'panel' || asset.type === 'tileset'
+        const height = asset.type === 'button' ? 700 : asset.type === 'panel' || asset.type === 'tileset' ? 720 : 520
         this.ensureWindow(id, wide ? 560 : 440, height)
         this.workspace.activeTab = 'editor'
       }
@@ -279,6 +282,12 @@ export const useProjectStore = defineStore('project', {
         })
         return
       }
+      if (key.startsWith('scene:')) {
+        this.patchAsset(key.slice(6), (asset) => {
+          if (asset.type === 'scene') asset.script = source
+        })
+        return
+      }
       if (key.startsWith('component:')) {
         const [, menuId, componentId] = key.split(':')
         if (menuId && componentId) this.patchComponent(menuId, componentId, (component) => {
@@ -323,6 +332,7 @@ export const useProjectStore = defineStore('project', {
       if (key.startsWith('asset:')) return this.asset(key.slice(6))?.type === 'script'
       if (key.startsWith('menu:')) return this.asset(key.slice(5))?.type === 'menu'
       if (key.startsWith('composite:')) return this.asset(key.slice(10))?.type === 'composite'
+      if (key.startsWith('scene:')) return this.asset(key.slice(6))?.type === 'scene'
       if (key.startsWith('component:')) {
         const [, menuId, componentId] = key.split(':')
         const menu = this.asset(menuId ?? null)
@@ -355,6 +365,10 @@ export const useProjectStore = defineStore('project', {
       if (key.startsWith('composite:')) {
         const asset = this.asset(key.slice(10))
         return asset?.type === 'composite' ? asset.script : ''
+      }
+      if (key.startsWith('scene:')) {
+        const asset = this.asset(key.slice(6))
+        return asset?.type === 'scene' ? asset.script : ''
       }
       if (key.startsWith('component:')) {
         const [, menuId, componentId] = key.split(':')
@@ -436,6 +450,17 @@ export const useProjectStore = defineStore('project', {
       }
       this.scheduleWorkspace()
     },
+    closeScene(id: string) {
+      this.workspace.openSceneIds = this.workspace.openSceneIds.filter((sceneId) => sceneId !== id)
+      if (this.workspace.activeTab === `scene:${id}`) this.workspace.activeTab = 'editor'
+      if (useSessionStore().selectedComponentId) {
+        const canvas = this.asset(id)
+        if (canvas && isCanvas(canvas) && canvas.components.some((component) => component.id === useSessionStore().selectedComponentId)) {
+          useSessionStore().selectedComponentId = null
+        }
+      }
+      this.scheduleWorkspace()
+    },
     closeCollection(id: string) {
       this.workspace.openCollectionIds = this.workspace.openCollectionIds.filter((collectionId) => collectionId !== id)
       if (this.workspace.activeTab === `collection:${id}`) this.workspace.activeTab = 'editor'
@@ -507,11 +532,10 @@ export const useProjectStore = defineStore('project', {
         const component = asset.components.find((item) => item.id === componentId)
         if (!component) return
         recipe(component)
-        const rect = clampRect(component, asset.width, asset.height)
-        component.x = rect.x
-        component.y = rect.y
-        component.width = rect.width
-        component.height = rect.height
+        component.x = Math.round(component.x)
+        component.y = Math.round(component.y)
+        component.width = Math.round(component.width)
+        component.height = Math.round(component.height)
       })
     },
     addComponent(menuId: string, type: MenuComponent['type']) {
@@ -543,6 +567,7 @@ export const useProjectStore = defineStore('project', {
         asset.components = asset.components.filter((component) => component.id !== componentId)
       })
       const session = useSessionStore()
+      if (session.tilemapEdit === `${menuId}/${componentId}`) session.tilemapEdit = null
       if (session.selectedComponentId === componentId) session.selectedComponentId = null
     },
     moveComponent(menuId: string, componentId: string, direction: -1 | 1) {

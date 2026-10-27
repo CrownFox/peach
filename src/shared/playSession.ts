@@ -153,6 +153,20 @@ export class PlaySession {
     return this.host?.pressKey(code, edge, fire) ?? false
   }
 
+  setTyping(typing: boolean): void {
+    this.host?.setTyping(typing)
+  }
+
+  setDisplayScale(scale: number): void {
+    this.host?.setDisplayScale(scale)
+  }
+
+  tick(elapsedMs: number): void {
+    this.advanceText(elapsedMs)
+    const top = this.modals.at(-1) ?? this.frames[this.index]
+    if (top) this.host?.advanceUpdate(top, elapsedMs)
+  }
+
   advanceText(elapsedMs: number): void {
     const frames = [this.frames[this.index], ...this.modals].filter((frame): frame is PlayFrame => frame !== undefined)
     if (this.host?.advanceText(frames, elapsedMs)) this.onChange()

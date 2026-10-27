@@ -251,12 +251,14 @@ onBeforeUnmount(() => {
       :drag-path="dragPath"
       :mark-path="markPath"
     />
-    <p v-if="project.tree.children.length === 0" class="tree-hint">Right-click to create a folder. Right-click a folder to add a menu, composite, button, panel, image, script, collection, or book.</p>
+    <p v-if="project.tree.children.length === 0" class="tree-hint">Right-click to create a folder. Right-click a folder to add a menu, scene, composite, tileset, button, panel, image, script, collection, or book.</p>
     <div v-if="menu" class="context-menu" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }">
       <button v-if="menu.blank" type="button" @click="create('folder')">New folder</button>
       <template v-else-if="menu.node.kind === 'folder'">
         <button type="button" @click="create('folder')">New folder</button>
         <button type="button" @click="create('menu')">New menu</button>
+        <button type="button" @click="create('scene')">New scene</button>
+        <button type="button" @click="create('tileset')">New tileset</button>
         <button type="button" @click="create('composite')">New composite</button>
         <button type="button" @click="create('button')">New button</button>
         <button type="button" @click="create('panel')">New panel</button>

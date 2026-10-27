@@ -1,6 +1,6 @@
 import type { MenuComponent } from './types'
 
-const colorNote = '-- self.visible  true or false. False hides this component.\n-- self.color    a color such as "#ff8800". White "#ffffff" leaves this unchanged.\n'
+const colorNote = '-- self.x        horizontal position, in the same pixels as the editor\n-- self.y        vertical position, in the same pixels as the editor\n-- self.visible  true or false. False hides this component.\n-- self.color    a color such as "#ff8800". White "#ffffff" leaves this unchanged.\n'
 
 const buttonScript = `${colorNote}-- Called when this button is clicked.
 -- self.text           the label
@@ -54,6 +54,18 @@ export function componentScriptTemplate(type: MenuComponent['type']): string {
   if (type === 'pageViewer') {
     return onChangeScript('-- onChange runs when the player edits a text field or dropdown on the page.\n-- self:loadPage(book, "Chapter/Page")\n-- game.loadPage(self, bookPage)\n-- self:get("field")\n-- self:getInput("key")\n-- self.book    a book path\n-- self.page    a chapter/page path\n-- self.panel   a panel path\n-- self.progressive   true streams the page in\n-- self.scrollable   true scrolls. false hides the rest of the page\n-- self.rate   characters per second\n-- self.finished   true when the stream has finished\n-- self:start()  self:stop()  self:resume()  self:finish()')
   }
-  if (type === 'composite') return `${colorNote}-- A placed composite uses the onLoad on its composite asset.\n`
+  if (type === 'composite') return `${colorNote}-- A placed composite uses the onLoad and onUpdate on its composite asset.\n`
+  if (type === 'tile') {
+    return `${colorNote}-- self:setTile("tiles/Dungeon", 0, 0)\n-- self.tileset   a tileset path\n-- self.tileX   column in the tileset. 0 is the left column\n-- self.tileY   row in the tileset. 0 is the top row\n`
+  }
+  if (type === 'tilemap') {
+    return `${colorNote}-- local path, column, row = self:getTile(0, 0)\n-- self:setTile(0, 0, 1, 2)\n-- self.tileset   a tileset path\n`
+  }
+  if (type === 'collider') {
+    return `${colorNote}-- local hits = self:collisionWith({"solid", "hurt"})\n-- hits[1].collider   the other collider\n-- hits[1].x   its position on this menu or scene\n-- hits[1].y\n-- self.tags   the names on this collider\n-- self.shape   "square" or "circle"\n-- self.enabled   true or false. False skips this collider\n`
+  }
+  if (type === 'sceneViewer') {
+    return `${colorNote}-- self.viewX   left edge of the view, in scene pixels\n-- self.viewY   top edge of the view, in scene pixels\n-- self.scale   a whole number. 2 draws each scene pixel as 2 by 2\n-- self.width   scene pixels visible across the view\n-- self.height  scene pixels visible down the view\n-- self.scene   a scene path\n`
+  }
   return onChangeScript('-- onChange runs when the player picks an option.\n-- self.value   the selected option id\n-- self.panel   a panel path, such as "ui/Frame"')
 }
