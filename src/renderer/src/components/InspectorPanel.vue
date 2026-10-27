@@ -6,7 +6,7 @@ import type { ComponentOverride } from '@shared/overrides'
 import { assetLocation } from '@shared/paths'
 import { compositeBlocked } from '@shared/composites'
 import { applyIntrinsicSize, intrinsicSize } from '@shared/intrinsicSize'
-import { fitTileSpan, mapSize, pruneCells, sameTileSize, tilesetById } from '@shared/tiles'
+import { fitTileSpan, mapSize, pruneCells, tilemapCellSize } from '@shared/tiles'
 import { isCanvas, type ButtonComponent } from '@shared/types'
 import { usePlayStore } from '@/stores/play'
 import { useProjectStore } from '@/stores/project'
@@ -82,14 +82,13 @@ function setRect(key: 'x' | 'y' | 'width' | 'height', event: Event): void {
     if ((key === 'width' || key === 'height') && component.type !== 'tilemap' && grid > 0) next = Math.round(value / grid) * grid
     component[key] = next
     if (component.type !== 'tilemap') return
-    const tileset = tilesetById(project.assets, component.tilesetId)
-    if (!tileset) return
-    const fitted = fitTileSpan(component, tileset.tileWidth, tileset.tileHeight)
+    const cell = tilemapCellSize(component, project.assets)
+    const fitted = fitTileSpan(component, cell.tileWidth, cell.tileHeight)
     component.x = fitted.x
     component.y = fitted.y
     component.width = fitted.width
     component.height = fitted.height
-    const size = mapSize(component.width, component.height, tileset.tileWidth, tileset.tileHeight)
+    const size = mapSize(component.width, component.height, cell.tileWidth, cell.tileHeight)
     component.cells = pruneCells(component.cells, size.cols, size.rows)
   })
   if (key === 'x' || key === 'y') forget(key)
@@ -275,28 +274,22 @@ function setTileIndex(key: 'tileX' | 'tileY', event: Event): void {
   forget(key)
 }
 
-function setTilemapTileset(id: string | null): void {
-  if (!menu.value || selected.value?.type !== 'tilemap') return
-  const current = tilesetById(project.assets, selected.value.tilesetId)
-  const next = tilesetById(project.assets, id)
-  if (current && next && !sameTileSize(current, next)) {
-    session.fail('That tileset uses a different tile size, so the palette was not changed.')
-    return
-  }
+function setTilemapCell(key: 'tileWidth' | 'tileHeight', event: Event): void {
+  const value = numberValue(event)
+  if (!menu.value || selected.value?.type !== 'tilemap' || value === null) return
+  const next = Math.max(1, Math.floor(value))
   project.patchComponent(menu.value.id, selected.value.id, (component) => {
     if (component.type !== 'tilemap') return
-    component.tilesetId = id
-    if (!current && next) {
-      const fitted = fitTileSpan(component, next.tileWidth, next.tileHeight)
-      component.x = fitted.x
-      component.y = fitted.y
-      component.width = fitted.width
-      component.height = fitted.height
-      const size = mapSize(component.width, component.height, next.tileWidth, next.tileHeight)
-      component.cells = pruneCells(component.cells, size.cols, size.rows)
-    }
+    component[key] = next
+    const cell = tilemapCellSize(component, project.assets)
+    const fitted = fitTileSpan(component, cell.tileWidth, cell.tileHeight)
+    component.x = fitted.x
+    component.y = fitted.y
+    component.width = fitted.width
+    component.height = fitted.height
+    const size = mapSize(component.width, component.height, cell.tileWidth, cell.tileHeight)
+    component.cells = pruneCells(component.cells, size.cols, size.rows)
   })
-  forget('tilesetRef')
   forget('cells')
 }
 
@@ -470,10 +463,12 @@ function patchButton(recipe: (component: ButtonComponent) => void): void {
           <p class="tree-hint">This box is one cell. A merged tile hangs out of it, and resizing stretches that picture.</p>
         </template>
         <template v-else-if="selected.type === 'tilemap'">
-          <AssetSelect label="Tileset" type="tileset" clearable :model-value="selected.tilesetId" @update:model-value="setTilemapTileset" />
-          <button class="btn" type="button" :disabled="!selected.tilesetId" @click="editTilemap">{{ editingTilemap ? 'Done painting' : 'Edit tiles' }}</button>
-          <button class="btn" type="button" :disabled="!selected.tilesetId" @click="openTileset(selected.tilesetId)">Open tileset</button>
-          <p class="tree-hint">Edit tiles paints this map in place. Width and height stay on whole tiles. A tileset with a different tile size is refused.</p>
+          <div class="grid-2">
+            <label class="field"><span class="field-label">Cell width</span><input type="number" min="1" step="1" :value="tilemapCellSize(selected, project.assets).tileWidth" @change="setTilemapCell('tileWidth', $event)" /></label>
+            <label class="field"><span class="field-label">Cell height</span><input type="number" min="1" step="1" :value="tilemapCellSize(selected, project.assets).tileHeight" @change="setTilemapCell('tileHeight', $event)" /></label>
+          </div>
+          <button class="btn" type="button" @click="editTilemap">{{ editingTilemap ? 'Done painting' : 'Edit tiles' }}</button>
+          <p class="tree-hint">Edit tiles paints this map in place. Pick a tileset in the palette, then a tile. Each cell keeps that tileset. Cell width and height are this map's grid, and the map's width and height stay on whole cells.</p>
         </template>
         <template v-if="selected.type === 'composite'">
           <AssetSelect

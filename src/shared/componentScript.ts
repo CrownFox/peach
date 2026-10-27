@@ -59,7 +59,7 @@ export function componentScriptTemplate(type: MenuComponent['type']): string {
     return `${colorNote}-- self:setTile("tiles/Dungeon", 0, 0)\n-- self.tileset   a tileset path\n-- self.tileX   column in the tileset. 0 is the left column\n-- self.tileY   row in the tileset. 0 is the top row\n`
   }
   if (type === 'tilemap') {
-    return `${colorNote}-- local path, column, row = self:getTile(0, 0)\n-- self:setTile(0, 0, 1, 2)\n-- self.tileset   a tileset path\n`
+    return `${colorNote}-- local path, column, row = self:getTile(0, 0)\n-- self:setTile(0, 0, "tiles/Dungeon", 1, 2)\n`
   }
   if (type === 'collider') {
     return `${colorNote}-- local hits = self:collisionWith({"solid", "hurt"})\n-- hits[1].collider   the other collider\n-- hits[1].x   its position on this menu or scene\n-- hits[1].y\n-- self.tags   the names on this collider\n-- self.shape   "square" or "circle"\n-- self.enabled   true or false. False skips this collider\n`

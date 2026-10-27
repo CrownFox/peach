@@ -148,7 +148,7 @@ export function readComponentProperty(
     if (override && 'sceneRef' in override) return override.sceneRef ?? null
     return locationOf(assets, component.sceneId)
   }
-  if ((component.type === 'tile' || component.type === 'tilemap') && key === 'tileset') {
+  if (component.type === 'tile' && key === 'tileset') {
     if (override && 'tilesetRef' in override) return override.tilesetRef ?? null
     return locationOf(assets, component.tilesetId)
   }

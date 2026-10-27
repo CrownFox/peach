@@ -5,7 +5,7 @@ import { DEFAULT_FONT_FAMILY } from './fonts'
 import { dropdownSelection, groupSelection, rangeNumbers, type ComponentOverride, type SceneOverrides } from './overrides'
 import { findAssetByLocation } from './refs'
 import { boxIntersects, clipInset, sceneById, sceneNodeId, viewerCamera, viewerScene } from './sceneCamera'
-import { imageForTileset, mapSize, pruneCells, tileDraws, tilemapDraws, tileSheet, tilesetFor, type TileStamp } from './tiles'
+import { imageForTileset, mapSize, pruneCells, tileDraws, tilemapCellSize, tilemapDraws, tileSheet, tilesetFor, type TileStamp } from './tiles'
 import type { Asset, ButtonAsset, ButtonSlices, CanvasAsset, ImageAsset, MenuComponent, PanelAsset, SliceFill } from './types'
 
 export type SceneText = {
@@ -596,6 +596,43 @@ function emitTiles(
     node.enabled = false
     placeNode(nodes, node, slot, clipView, flipX, flipY)
   }
+  const spanWidth = Math.abs(component.width)
+  const spanHeight = Math.abs(component.height)
+  const placeSheet = (local: { width: number; height: number; draws: ReturnType<typeof tileDraws> }, imagePath: string | null): void => {
+    const scaleX = local.width > 0 ? slot.width / local.width : 0
+    const scaleY = local.height > 0 ? slot.height / local.height : 0
+    const sheet = tileSheet(local.draws)
+    if (!sheet || sheet.width <= 0 || sheet.height <= 0) return
+    const box = {
+      x: slot.x + sheet.x * scaleX,
+      y: slot.y + sheet.y * scaleY,
+      width: sheet.width * scaleX,
+      height: sheet.height * scaleY
+    }
+    const node = emptyNode({ id: `${present}@sheet`, name: component.name, ...percentBox(box, rootWidth, rootHeight) }, 'tile')
+    node.imagePath = imagePath
+    node.sheet = sheet.stamps
+    node.crisp = true
+    node.color = color
+    node.visible = shown
+    node.enabled = false
+    placeNode(nodes, node, box, clipView, flipX, flipY)
+  }
+  if (component.type === 'tilemap') {
+    const grid = tilemapCellSize(component, assets)
+    const size = mapSize(spanWidth, spanHeight, grid.tileWidth, grid.tileHeight)
+    const mapCells = pruneCells(placed?.cells ?? component.cells, size.cols, size.rows)
+    const draws = tilemapDraws(mapCells, grid.tileWidth, grid.tileHeight, assets)
+    if (draws.length === 0) {
+      if (mapCells.length > 0) missing('Missing tileset')
+      return
+    }
+    placeSheet(
+      { width: size.cols * grid.tileWidth, height: size.rows * grid.tileHeight, draws },
+      draws[0]?.imagePath ?? null
+    )
+    return
+  }
   if (!tileset) {
     missing(component.tilesetId || (placed && 'tilesetRef' in placed) ? 'Missing tileset' : 'No tileset')
     return
@@ -604,39 +641,12 @@ function emitTiles(
     missing('No image')
     return
   }
-  const spanWidth = Math.abs(component.width)
-  const spanHeight = Math.abs(component.height)
-  const size = component.type === 'tilemap' ? mapSize(spanWidth, spanHeight, tileset.tileWidth, tileset.tileHeight) : { cols: 1, rows: 1 }
-  const local =
-    component.type === 'tile'
-      ? { width: spanWidth, height: spanHeight, draws: tileDraws(tileset, image, placed?.tileX ?? component.tileX, placed?.tileY ?? component.tileY, { x: 0, y: 0, width: spanWidth, height: spanHeight }) }
-      : {
-          width: size.cols * tileset.tileWidth,
-          height: size.rows * tileset.tileHeight,
-          draws: tilemapDraws(tileset, image, pruneCells(placed?.cells ?? component.cells, size.cols, size.rows))
-        }
-  if (component.type === 'tile' && local.draws.length === 0) {
+  const draws = tileDraws(tileset, image, placed?.tileX ?? component.tileX, placed?.tileY ?? component.tileY, { x: 0, y: 0, width: spanWidth, height: spanHeight })
+  if (draws.length === 0) {
     missing('Outside tileset')
     return
   }
-  const scaleX = local.width > 0 ? slot.width / local.width : 0
-  const scaleY = local.height > 0 ? slot.height / local.height : 0
-  const sheet = tileSheet(local.draws)
-  if (!sheet || sheet.width <= 0 || sheet.height <= 0) return
-  const box = {
-    x: slot.x + sheet.x * scaleX,
-    y: slot.y + sheet.y * scaleY,
-    width: sheet.width * scaleX,
-    height: sheet.height * scaleY
-  }
-  const node = emptyNode({ id: `${present}@sheet`, name: component.name, ...percentBox(box, rootWidth, rootHeight) }, 'tile')
-  node.imagePath = image.file
-  node.sheet = sheet.stamps
-  node.crisp = true
-  node.color = color
-  node.visible = shown
-  node.enabled = false
-  placeNode(nodes, node, box, clipView, flipX, flipY)
+  placeSheet({ width: spanWidth, height: spanHeight, draws }, image.file)
 }
 
 function buttonNode(

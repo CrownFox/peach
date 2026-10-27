@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { assetDocument, createAsset, createButtonAsset, createButtonComponent, createMenuComponent, createPageViewerComponent, createPanelAsset, duplicateMenuComponent, parseAsset, parseMeta, planDuplicate } from './assets'
 import { intrinsicSize } from './intrinsicSize'
 import { resizeRect, snapTilemapSize, snapToGrid } from './resize'
-import { fillRegion, lineCells, mapSize, placedTile, pruneCells, tileSheet } from './tiles'
+import { fillRegion, lineCells, mapSize, placedTile, pruneCells, tileAtPoint, tileSheet, tilemapCellSize } from './tiles'
 import { writeComponentProperty, type SceneOverrides } from './overrides'
 import { buildScene, devicePixelScale, fitFrame, fittedBorderWidths, nineSliceLayout, snapNineSlice } from './scene'
 import { assetLocation, sanitizeFileStem, uniqueName } from './paths'
@@ -922,6 +922,13 @@ describe('composites', () => {
 })
 
 describe('tiles', () => {
+  it('reads a tileset cell from the zoomed sheet', () => {
+    expect(tileAtPoint(16, 0, 64, 32, 64, 32, 16, 16, 4, 2)).toEqual({ x: 1, y: 0 })
+    expect(tileAtPoint(32, 16, 128, 64, 64, 32, 16, 16, 4, 2)).toEqual({ x: 1, y: 0 })
+    expect(tileAtPoint(8, 4, 32, 16, 64, 32, 16, 16, 4, 2)).toEqual({ x: 1, y: 0 })
+    expect(tileAtPoint(128, 0, 128, 64, 64, 32, 16, 16, 4, 2)).toBeNull()
+  })
+
   it('hangs the rest of a merged tile off the selected cell', () => {
     const picture = image('img', 'Dungeon', 'Dungeon.image.json', 'dungeon.png')
     picture.width = 64
@@ -937,13 +944,15 @@ describe('tiles', () => {
     const map = createMenuComponent('tilemap', [])
     if (map.type !== 'tilemap') throw new Error('tilemap')
     map.tilesetId = 'dungeon'
+    map.tileWidth = 32
+    map.tileHeight = 32
     map.x = 40
     map.y = 40
     map.width = 64
     map.height = 32
     map.cells = [
-      { x: 0, y: 0, tileX: 0, tileY: 1 },
-      { x: 5, y: 0, tileX: 0, tileY: 0 }
+      { x: 0, y: 0, tileX: 0, tileY: 1, tilesetId: 'dungeon' },
+      { x: 5, y: 0, tileX: 0, tileY: 0, tilesetId: 'dungeon' }
     ]
     const menu = createAsset('menu', 'Main', 'Main.menu.json', 'menu') as MenuAsset
     menu.width = 200
@@ -954,7 +963,7 @@ describe('tiles', () => {
     expect(nodes[0]?.sheet).toHaveLength(1)
     expect((nodes[0]?.y ?? 0) / 100 * menu.height).toBeCloseTo(8)
     expect((nodes[0]?.height ?? 0) / 100 * menu.height).toBeCloseTo(64)
-    expect(pruneCells(map.cells, 2, 1)).toEqual([{ x: 0, y: 0, tileX: 0, tileY: 1 }])
+    expect(pruneCells(map.cells, 2, 1)).toEqual([{ x: 0, y: 0, tileX: 0, tileY: 1, tilesetId: 'dungeon' }])
   })
 
   it('packs a tilemap into one sheet with tiles touching', () => {
@@ -969,11 +978,13 @@ describe('tiles', () => {
     const map = createMenuComponent('tilemap', [])
     if (map.type !== 'tilemap') throw new Error('tilemap')
     map.tilesetId = 'dungeon'
+    map.tileWidth = 32
+    map.tileHeight = 32
     map.width = 64
     map.height = 32
     map.cells = [
-      { x: 0, y: 0, tileX: 0, tileY: 0 },
-      { x: 1, y: 0, tileX: 1, tileY: 0 }
+      { x: 0, y: 0, tileX: 0, tileY: 0, tilesetId: 'dungeon' },
+      { x: 1, y: 0, tileX: 1, tileY: 0, tilesetId: 'dungeon' }
     ]
     const menu = createAsset('menu', 'Main', 'Main.menu.json', 'menu') as MenuAsset
     menu.components = [map]
@@ -988,6 +999,67 @@ describe('tiles', () => {
     ])
     expect(packed).toMatchObject({ y: -32, height: 64 })
     expect(packed?.stamps.map((stamp) => stamp.y).sort((left, right) => left - right)).toEqual([0, 32])
+  })
+
+  it('draws mixed tilesets in one sheet and keeps an older map on that tileset', () => {
+    const grassImage = image('grass-img', 'Grass', 'Grass.image.json', 'grass.png')
+    const treeImage = image('tree-img', 'Trees', 'Trees.image.json', 'trees.png')
+    grassImage.width = 16
+    grassImage.height = 16
+    treeImage.width = 32
+    treeImage.height = 32
+    const grass = createAsset('tileset', 'Grass', 'tiles/Grass.tileset.json', 'grass')
+    const trees = createAsset('tileset', 'Trees', 'tiles/Trees.tileset.json', 'trees')
+    if (grass.type !== 'tileset' || trees.type !== 'tileset') throw new Error('tileset')
+    grass.imageId = 'grass-img'
+    grass.tileWidth = 16
+    grass.tileHeight = 16
+    trees.imageId = 'tree-img'
+    trees.tileWidth = 32
+    trees.tileHeight = 32
+    const map = createMenuComponent('tilemap', [])
+    if (map.type !== 'tilemap') throw new Error('tilemap')
+    map.tileWidth = 16
+    map.tileHeight = 16
+    map.width = 32
+    map.height = 32
+    map.cells = [
+      { x: 0, y: 1, tileX: 0, tileY: 0, tilesetId: 'grass' },
+      { x: 0, y: 0, tileX: 0, tileY: 0, tilesetId: 'trees' }
+    ]
+    const menu = createAsset('menu', 'Main', 'Main.menu.json', 'menu') as MenuAsset
+    menu.components = [map]
+    const sheet = buildScene(menu, [grassImage, treeImage, grass, trees]).find((node) => node.kind === 'tile')?.sheet ?? []
+    expect(sheet.map((stamp) => stamp.imagePath)).toEqual(['trees.png', 'grass.png'])
+    expect(sheet[0]?.width).toBe(16)
+
+    const parsed = parseAsset(
+      {
+        formatVersion: 2,
+        id: 'room',
+        type: 'menu',
+        name: 'Room',
+        width: 320,
+        height: 180,
+        components: [{ id: 'ground', type: 'tilemap', name: 'Ground', x: 0, y: 0, width: 64, height: 32, tilesetId: 'dungeon', cells: [{ x: 1, y: 0, tileX: 1, tileY: 0 }] }]
+      },
+      'Room.menu.json'
+    )
+    const ground = parsed.type === 'menu' ? parsed.components[0] : null
+    expect(ground).toMatchObject({ tileWidth: 0, tileHeight: 0, tilesetId: 'dungeon', cells: [{ x: 1, y: 0, tileX: 1, tileY: 0, tilesetId: 'dungeon' }] })
+    if (!ground || ground.type !== 'tilemap') throw new Error('tilemap')
+    const picture = image('img', 'Dungeon', 'Dungeon.image.json', 'dungeon.png')
+    picture.width = 64
+    picture.height = 32
+    const tileset = createAsset('tileset', 'Dungeon', 'tiles/Dungeon.tileset.json', 'dungeon')
+    if (tileset.type !== 'tileset') throw new Error('tileset')
+    tileset.imageId = 'img'
+    tileset.tileWidth = 32
+    tileset.tileHeight = 32
+    expect(tilemapCellSize(ground, [tileset])).toEqual({ tileWidth: 32, tileHeight: 32 })
+    const legacy = buildScene(parsed.type === 'menu' ? parsed : menu, [picture, tileset]).find((node) => node.kind === 'tile')
+    expect(legacy?.sheet?.[0]?.width).toBe(32)
+    expect(legacy?.sheet?.[0]?.imagePath).toBe('dungeon.png')
   })
 
   it('snaps the closer edge and keeps the aspect ratio', () => {
@@ -1008,24 +1080,37 @@ describe('tiles', () => {
   it('draws a straight line of cells and fills a connected area', () => {
     expect(lineCells(0, 0, 3, 0).map((cell) => cell.x)).toEqual([0, 1, 2, 3])
     expect(lineCells(1, 1, 1, 1)).toEqual([{ x: 1, y: 1 }])
-    const filled = fillRegion([], 3, 3, 1, 1, { tileX: 2, tileY: 0 })
+    const filled = fillRegion([], 3, 3, 1, 1, { tilesetId: 'dungeon', tileX: 2, tileY: 0 })
     expect(filled).toHaveLength(9)
     const blocked = fillRegion(
       [
-        { x: 1, y: 0, tileX: 4, tileY: 4 },
-        { x: 1, y: 1, tileX: 4, tileY: 4 },
-        { x: 1, y: 2, tileX: 4, tileY: 4 }
+        { x: 1, y: 0, tileX: 4, tileY: 4, tilesetId: 'dungeon' },
+        { x: 1, y: 1, tileX: 4, tileY: 4, tilesetId: 'dungeon' },
+        { x: 1, y: 2, tileX: 4, tileY: 4, tilesetId: 'dungeon' }
       ],
       3,
       3,
       0,
       1,
-      { tileX: 1, tileY: 0 }
+      { tilesetId: 'dungeon', tileX: 1, tileY: 0 }
     )
     const painted = blocked.filter((cell) => cell.tileX === 1)
     expect(painted).toHaveLength(3)
     expect(painted.every((cell) => cell.x === 0)).toBe(true)
     expect(blocked.filter((cell) => cell.tileX === 4)).toHaveLength(3)
-    expect(fillRegion([{ x: 0, y: 0, tileX: 2, tileY: 0 }], 2, 1, 0, 0, { tileX: 2, tileY: 0 })).toEqual([{ x: 0, y: 0, tileX: 2, tileY: 0 }])
+    expect(fillRegion([{ x: 0, y: 0, tileX: 2, tileY: 0, tilesetId: 'dungeon' }], 2, 1, 0, 0, { tilesetId: 'dungeon', tileX: 2, tileY: 0 })).toEqual([{ x: 0, y: 0, tileX: 2, tileY: 0, tilesetId: 'dungeon' }])
+    const mixed = fillRegion(
+      [
+        { x: 0, y: 0, tileX: 1, tileY: 0, tilesetId: 'grass' },
+        { x: 1, y: 0, tileX: 1, tileY: 0, tilesetId: 'trees' }
+      ],
+      2,
+      1,
+      0,
+      0,
+      { tilesetId: 'water', tileX: 2, tileY: 0 }
+    )
+    expect(mixed.find((cell) => cell.x === 0)?.tilesetId).toBe('water')
+    expect(mixed.find((cell) => cell.x === 1)?.tilesetId).toBe('trees')
   })
 })

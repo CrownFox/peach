@@ -203,11 +203,11 @@ function paintNode(
   clearFace(face)
   const url = node.imagePath ? resolveUrl(node.imagePath) : ''
   const tiled = url && !node.sheet && !node.slices && node.imageFit === 'tile' && el.clientWidth > 0 && el.clientHeight > 0
-  if (url && node.sheet && node.sheet.length > 0) {
+  if (node.sheet && node.sheet.length > 0 && (url || node.sheet[0]?.imagePath)) {
     picture.style.display = 'none'
     face.querySelector('canvas.tile')?.remove()
     face.querySelector('canvas.nine')?.remove()
-    paintTileSheet(face, node.sheet, url)
+    paintTileSheet(face, node.sheet, url, resolveUrl)
   } else if (url && node.slices && el.clientWidth > 0 && el.clientHeight > 0) {
     picture.style.display = 'none'
     paintNineSlice(face, el, node, url)
@@ -251,9 +251,17 @@ function ensureCanvas(face: HTMLElement, className: 'tile' | 'nine' | 'sheet'): 
   return canvas
 }
 
-function sheetSignature(stamps: readonly TileStamp[]): string {
-  let hash = 2166136261
+function sheetSignature(stamps: readonly TileStamp[], fallbackUrl: string): string {
+  let hash = hashText(2166136261, fallbackUrl)
+  const pathHash = new Map<string, number>()
   for (const stamp of stamps) {
+    const path = stamp.imagePath ?? ''
+    let mix = pathHash.get(path)
+    if (mix === undefined) {
+      mix = hashText(2166136261, path)
+      pathHash.set(path, mix)
+    }
+    hash = Math.imul(hash ^ mix, 16777619)
     hash = Math.imul(hash ^ Math.round(stamp.x), 16777619)
     hash = Math.imul(hash ^ Math.round(stamp.y), 16777619)
     hash = Math.imul(hash ^ Math.round(stamp.width), 16777619)
@@ -266,30 +274,47 @@ function sheetSignature(stamps: readonly TileStamp[]): string {
   return `${stamps.length}:${hash >>> 0}`
 }
 
-function paintTileSheet(face: HTMLElement, stamps: readonly TileStamp[], url: string): void {
+function hashText(hash: number, text: string): number {
+  for (let index = 0; index < text.length; index += 1) hash = Math.imul(hash ^ text.charCodeAt(index), 16777619)
+  return hash
+}
+
+function sheetImage(url: string): HTMLImageElement {
+  const existing = sliceImages.get(url)
+  if (existing) return existing
+  const image = new Image()
+  image.src = url
+  sliceImages.set(url, image)
+  return image
+}
+
+function paintTileSheet(face: HTMLElement, stamps: readonly TileStamp[], fallbackUrl: string, resolveUrl: (path: string) => string): void {
   const canvas = ensureCanvas(face, 'sheet')
-  const signature = `${url}|${sheetSignature(stamps)}`
+  const signature = sheetSignature(stamps, fallbackUrl)
   if (canvas.dataset.sig === signature) return
   if (canvas.dataset.pending === signature) return
   canvas.dataset.pending = signature
-  canvas.dataset.url = url
+  const painted = stamps.map((stamp) => ({ ...stamp, url: stamp.imagePath ? resolveUrl(stamp.imagePath) : fallbackUrl }))
+  const urls = [...new Set(painted.map((stamp) => stamp.url).filter((url) => url.length > 0))]
   const draw = (): void => {
     if (!canvas.isConnected || canvas.dataset.pending !== signature) return
-    const image = sliceImages.get(url)
-    if (!image || image.naturalWidth <= 0 || image.naturalHeight <= 0) return
-    drawTileSheet(canvas, image, stamps)
+    if (urls.some((url) => !imageReady(url))) return
+    drawTileSheet(canvas, painted)
     canvas.dataset.sig = signature
   }
-  const image = sliceImages.get(url) ?? new Image()
-  if (!sliceImages.has(url)) {
-    image.src = url
-    sliceImages.set(url, image)
+  for (const url of urls) {
+    const image = sheetImage(url)
+    if (!image.complete || image.naturalWidth <= 0) image.addEventListener('load', draw, { once: true })
   }
-  if (image.complete && image.naturalWidth > 0) draw()
-  else image.addEventListener('load', draw, { once: true })
+  draw()
 }
 
-function drawTileSheet(canvas: HTMLCanvasElement, image: HTMLImageElement, stamps: readonly TileStamp[]): void {
+function imageReady(url: string): boolean {
+  const image = sliceImages.get(url)
+  return image !== undefined && image.complete && image.naturalWidth > 0 && image.naturalHeight > 0
+}
+
+function drawTileSheet(canvas: HTMLCanvasElement, stamps: readonly (TileStamp & { url: string })[]): void {
   let width = 1
   let height = 1
   for (const stamp of stamps) {
@@ -306,9 +331,10 @@ function drawTileSheet(canvas: HTMLCanvasElement, image: HTMLImageElement, stamp
   ctx.imageSmoothingEnabled = false
   ctx.clearRect(0, 0, width, height)
   for (const stamp of stamps) {
+    const image = sliceImages.get(stamp.url)
     const dw = Math.round(stamp.width)
     const dh = Math.round(stamp.height)
-    if (dw <= 0 || dh <= 0 || stamp.crop.width <= 0 || stamp.crop.height <= 0) continue
+    if (!image || dw <= 0 || dh <= 0 || stamp.crop.width <= 0 || stamp.crop.height <= 0) continue
     ctx.drawImage(
       image,
       stamp.crop.x,

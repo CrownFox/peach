@@ -4,7 +4,7 @@ import { minimumCanvasSize, rectPercent } from '@shared/assets'
 import { centerContent } from '@shared/canvasView'
 import { storedFromVisual, visualRect } from '@shared/composites'
 import { resizeRect, snapTilemapSize, snapToGrid } from '@shared/resize'
-import { eraseCells, fillRegion, fitTileSpan, imageForTileset, lineCells, mapSize, mergeAt, paintCells, placedTile, pruneCells, tileGrid, tilesetById } from '@shared/tiles'
+import { eraseCells, fillRegion, fitTileSpan, imageForTileset, lineCells, mapSize, mergeAt, paintCells, placedTile, pruneCells, tileGrid, tilemapCellSize, tilesetById } from '@shared/tiles'
 import { buildScene } from '@shared/scene'
 import { DEFAULT_MENU_HEIGHT, DEFAULT_MENU_WIDTH, isCanvas, type MenuComponent } from '@shared/types'
 import { fileUrl } from '@/thumbs'
@@ -61,7 +61,8 @@ const palette = computed(() => (menu.value?.type === 'scene' ? componentTypes.fi
 const handles = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 const tool = ref<'paint' | 'line' | 'bucket'>('paint')
 const erasing = ref(false)
-const brush = ref<{ tileX: number; tileY: number } | null>(null)
+const brush = ref<{ tilesetId: string; tileX: number; tileY: number } | null>(null)
+const paletteId = ref<string | null>(null)
 const hoverCell = ref<{ x: number; y: number } | null>(null)
 const stroke = ref<{ x: number; y: number }[] | null>(null)
 const showBelow = ref(true)
@@ -72,7 +73,7 @@ const editing = computed(() => {
   const component = menu.value.components.find((item) => item.id === key.slice(props.menuId.length + 1))
   return component?.type === 'tilemap' ? component : null
 })
-const paintTileset = computed(() => tilesetById(project.assets, editing.value?.tilesetId ?? null))
+const paintTileset = computed(() => tilesetById(project.assets, paletteId.value))
 const paintImage = computed(() => (paintTileset.value ? imageForTileset(paintTileset.value, project.assets) : null))
 const paintUrl = computed(() => fileUrl(paintImage.value?.file ?? null))
 const paintGrid = computed(() => tileGrid(paintTileset.value?.tileWidth ?? 0, paintTileset.value?.tileHeight ?? 0, paintImage.value?.width ?? 0, paintImage.value?.height ?? 0))
@@ -85,10 +86,11 @@ const swatches = computed(() => {
 })
 const metrics = computed(() => {
   const component = editing.value
-  const tileset = paintTileset.value
-  if (!component || !tileset || tileset.tileWidth < 1 || tileset.tileHeight < 1) return null
+  if (!component) return null
+  const cell = tilemapCellSize(component, project.assets)
+  if (cell.tileWidth < 1 || cell.tileHeight < 1) return null
   const box = hitRect(component)
-  const size = mapSize(box.width, box.height, tileset.tileWidth, tileset.tileHeight)
+  const size = mapSize(box.width, box.height, cell.tileWidth, cell.tileHeight)
   return { ...box, cols: size.cols, rows: size.rows, cellW: box.width / size.cols, cellH: box.height / size.rows }
 })
 const cellGridStyle = computed(() => {
@@ -176,6 +178,16 @@ function hitRect(component: MenuComponent): { x: number; y: number; width: numbe
   return visualRect(component, project.assets)
 }
 
+watch(
+  () => editing.value?.id ?? null,
+  () => {
+    const map = editing.value
+    brush.value = null
+    paletteId.value = map?.tilesetId ?? map?.cells.find((cell) => cell.tilesetId)?.tilesetId ?? null
+  },
+  { immediate: true }
+)
+
 watch(() => session.selectedComponentId, (id) => {
   const key = session.tilemapEdit
   if (!key?.startsWith(`${props.menuId}/`)) return
@@ -209,9 +221,15 @@ function swatchStyle(x: number, y: number): Record<string, string> {
   }
 }
 
+function choosePalette(id: string | null): void {
+  paletteId.value = id
+  brush.value = null
+}
+
 function chooseSwatch(x: number, y: number): void {
+  if (!paletteId.value) return
   erasing.value = false
-  brush.value = { tileX: x, tileY: y }
+  brush.value = { tilesetId: paletteId.value, tileX: x, tileY: y }
 }
 
 function pointerCell(event: PointerEvent): { x: number; y: number } | null {
@@ -244,7 +262,7 @@ function applyPoints(points: { x: number; y: number }[]): void {
     return
   }
   if (!brush.value) return
-  writeCells(paintCells(map.cells, points, brush.value.tileX, brush.value.tileY))
+  writeCells(paintCells(map.cells, points, brush.value.tilesetId, brush.value.tileX, brush.value.tileY))
 }
 
 function beginStroke(cell: { x: number; y: number }): void {
@@ -334,9 +352,9 @@ function onPointerDown(event: PointerEvent): void {
     const dy = ((ev.clientY - drag.startY) / drag.frameH) * drag.menuH
     const edge = drag.handle ?? ''
     let next = resizeRect(drag.rect, dx, dy, edge, ev.shiftKey)
-    const tileset = component.type === 'tilemap' ? tilesetById(project.assets, component.tilesetId) : null
+    const cell = component.type === 'tilemap' ? tilemapCellSize(component, project.assets) : null
     const grid = menu.value?.snapToGrid ? menu.value.gridSize : 0
-    if (tileset && edge) next = snapTilemapSize(drag.rect, next, edge, tileset.tileWidth, tileset.tileHeight, ev.shiftKey)
+    if (cell && edge) next = snapTilemapSize(drag.rect, next, edge, cell.tileWidth, cell.tileHeight, ev.shiftKey)
     else if (grid > 0) next = snapToGrid(drag.rect, next, edge, grid, grid, ev.shiftKey)
     if (!edge) {
       project.patchComponent(props.menuId, drag.id, (item) => {
@@ -345,7 +363,7 @@ function onPointerDown(event: PointerEvent): void {
       })
       return
     }
-    const rect = tileset ? fitTileSpan(next, tileset.tileWidth, tileset.tileHeight) : next
+    const rect = cell ? fitTileSpan(next, cell.tileWidth, cell.tileHeight) : next
     const stored = storedFromVisual(component, rect, project.assets)
     project.patchComponent(props.menuId, drag.id, (item) => {
       item.x = stored.x
@@ -358,11 +376,10 @@ function onPointerDown(event: PointerEvent): void {
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', up)
     if (component.type !== 'tilemap') return
-    const tileset = tilesetById(project.assets, component.tilesetId)
-    if (!tileset) return
+    const cell = tilemapCellSize(component, project.assets)
     project.patchComponent(props.menuId, component.id, (item) => {
       if (item.type !== 'tilemap') return
-      const size = mapSize(item.width, item.height, tileset.tileWidth, tileset.tileHeight)
+      const size = mapSize(item.width, item.height, cell.tileWidth, cell.tileHeight)
       item.cells = pruneCells(item.cells, size.cols, size.rows)
     })
     play.clearOverride(props.menuId, component.id, 'cells')
@@ -591,18 +608,22 @@ onBeforeUnmount(() => {
         <button class="btn" type="button" @click="finishTiles">Done</button>
         <p class="tree-hint">Painting happens on the canvas. Below and above are the pieces drawn under or over this map.</p>
       </div>
+      <div class="tilemap-palette">
+        <AssetSelect label="Tileset" type="tileset" clearable :model-value="paletteId" @update:model-value="choosePalette" />
+        <button class="btn" type="button" :disabled="!paletteId" @click="paletteId && project.openAsset(paletteId)">Open tileset</button>
+      </div>
       <div v-if="paintImage?.file" class="tilemap-swatches" :style="{ gridTemplateColumns: `repeat(${Math.max(paintGrid.cols, 1)}, 32px)` }">
         <button
           v-for="cell in swatches"
           :key="`${cell.x},${cell.y}`"
           type="button"
           class="tilemap-swatch"
-          :class="{ selected: !erasing && brush?.tileX === cell.x && brush?.tileY === cell.y }"
+          :class="{ selected: !erasing && brush?.tilesetId === paletteId && brush?.tileX === cell.x && brush?.tileY === cell.y }"
           :style="swatchStyle(cell.x, cell.y)"
           @click="chooseSwatch(cell.x, cell.y)"
         ></button>
       </div>
-      <p v-else class="tree-hint">Choose a tileset with an image for this tilemap.</p>
+      <p v-else class="tree-hint">Choose a tileset, then a tile. Each cell keeps the tileset it was painted from.</p>
     </div>
     <div
       ref="stageEl"

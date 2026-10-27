@@ -1530,9 +1530,11 @@ end`
     map.id = 'ground'
     map.handle = 'ground'
     map.tilesetId = 'dungeon'
+    map.tileWidth = 32
+    map.tileHeight = 32
     map.width = 64
     map.height = 32
-    map.cells = [{ x: 0, y: 0, tileX: 0, tileY: 1 }]
+    map.cells = [{ x: 0, y: 0, tileX: 0, tileY: 1, tilesetId: 'dungeon' }]
     const mark = createMenuComponent('image', [])
     mark.id = 'mark'
     mark.handle = 'mark'
@@ -1548,7 +1550,7 @@ end`
         local path, column, row = self.ground:getTile(0, 0)
         self.mark.x = column
         self.mark.y = row
-        self.ground:setTile(1, 0, 1, 0)
+        self.ground:setTile(1, 0, "tiles/Dungeon", 1, 0)
         self.icon:setTile("tiles/Dungeon", 1, 0)
       end`,
       [map, mark, icon]
@@ -1558,10 +1560,10 @@ end`
     expect(session.currentOverrides().mark?.x).toBe(0)
     expect(session.currentOverrides().mark?.y).toBe(1)
     expect(session.currentOverrides().ground?.cells).toEqual([
-      { x: 0, y: 0, tileX: 0, tileY: 1 },
-      { x: 1, y: 0, tileX: 1, tileY: 0 }
+      { x: 0, y: 0, tileX: 0, tileY: 1, tilesetId: 'dungeon' },
+      { x: 1, y: 0, tileX: 1, tileY: 0, tilesetId: 'dungeon' }
     ])
-    expect(map.cells).toEqual([{ x: 0, y: 0, tileX: 0, tileY: 1 }])
+    expect(map.cells).toEqual([{ x: 0, y: 0, tileX: 0, tileY: 1, tilesetId: 'dungeon' }])
     expect(session.currentOverrides().icon).toMatchObject({ tilesetRef: 'tiles/Dungeon', tileX: 1, tileY: 0 })
     expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
   })

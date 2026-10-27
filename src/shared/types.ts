@@ -237,7 +237,7 @@ export type SceneViewerComponent = ComponentBase & {
 
 export type TileSpan = { x: number; y: number; width: number; height: number }
 
-export type TileCell = { x: number; y: number; tileX: number; tileY: number }
+export type TileCell = { x: number; y: number; tileX: number; tileY: number; tilesetId: string | null }
 
 export type TileComponent = ComponentBase & {
   type: 'tile'
@@ -249,6 +249,8 @@ export type TileComponent = ComponentBase & {
 export type TilemapComponent = ComponentBase & {
   type: 'tilemap'
   tilesetId: string | null
+  tileWidth: number
+  tileHeight: number
   cells: TileCell[]
 }
 

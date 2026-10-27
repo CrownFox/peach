@@ -17,6 +17,7 @@ export type TileDraw = {
   width: number
   height: number
   crop: TileCrop
+  imagePath?: string | null
 }
 
 export type TileStamp = {
@@ -25,6 +26,7 @@ export type TileStamp = {
   width: number
   height: number
   crop: { x: number; y: number; width: number; height: number }
+  imagePath: string | null
 }
 
 export function tileSheet(draws: readonly TileDraw[]): { x: number; y: number; width: number; height: number; stamps: TileStamp[] } | null {
@@ -49,7 +51,8 @@ export function tileSheet(draws: readonly TileDraw[]): { x: number; y: number; w
       y: draw.y - minY,
       width: draw.width,
       height: draw.height,
-      crop: { x: draw.crop.x, y: draw.crop.y, width: draw.crop.width, height: draw.crop.height }
+      crop: { x: draw.crop.x, y: draw.crop.y, width: draw.crop.width, height: draw.crop.height },
+      imagePath: draw.imagePath ?? null
     }))
   }
 }
@@ -59,6 +62,25 @@ type CellBox = { x: number; y: number; width: number; height: number }
 export function tileGrid(tileWidth: number, tileHeight: number, imageWidth: number, imageHeight: number): { cols: number; rows: number } {
   if (tileWidth < 1 || tileHeight < 1 || imageWidth < 1 || imageHeight < 1) return { cols: 0, rows: 0 }
   return { cols: Math.floor(imageWidth / tileWidth), rows: Math.floor(imageHeight / tileHeight) }
+}
+
+export function tileAtPoint(
+  offsetX: number,
+  offsetY: number,
+  screenWidth: number,
+  screenHeight: number,
+  layoutWidth: number,
+  layoutHeight: number,
+  tileWidth: number,
+  tileHeight: number,
+  cols: number,
+  rows: number
+): { x: number; y: number } | null {
+  if (!(screenWidth > 0) || !(screenHeight > 0) || tileWidth < 1 || tileHeight < 1 || cols < 1 || rows < 1) return null
+  const x = Math.floor((offsetX * layoutWidth) / screenWidth / tileWidth)
+  const y = Math.floor((offsetY * layoutHeight) / screenHeight / tileHeight)
+  if (x < 0 || y < 0 || x >= cols || y >= rows) return null
+  return { x, y }
 }
 
 export function spanFits(span: TileSpan, cols: number, rows: number): boolean {
@@ -83,6 +105,18 @@ export function fittedMerges(merges: readonly TileSpan[], tileWidth: number, til
   return keepMerges(merges, grid.cols, grid.rows)
 }
 
+type AssetList = Iterable<Asset> | Map<string, Asset>
+
+export function tilemapCellSize(
+  component: { tileWidth: number; tileHeight: number; tilesetId: string | null },
+  assets: AssetList
+): { tileWidth: number; tileHeight: number } {
+  if (component.tileWidth > 0 && component.tileHeight > 0) return { tileWidth: component.tileWidth, tileHeight: component.tileHeight }
+  const tileset = tilesetFrom(assets, component.tilesetId)
+  if (tileset && tileset.tileWidth > 0 && tileset.tileHeight > 0) return { tileWidth: tileset.tileWidth, tileHeight: tileset.tileHeight }
+  return { tileWidth: 16, tileHeight: 16 }
+}
+
 export function mapSize(width: number, height: number, tileWidth: number, tileHeight: number): { cols: number; rows: number } {
   return {
     cols: tileWidth > 0 ? Math.max(1, Math.round(Math.abs(width) / tileWidth)) : 1,
@@ -103,16 +137,22 @@ export function readCell(cells: readonly TileCell[], x: number, y: number): Tile
   return cells.find((cell) => cell.x === x && cell.y === y) ?? null
 }
 
-export function paintCell(cells: readonly TileCell[], x: number, y: number, tileX: number, tileY: number): TileCell[] {
-  return [...cells.filter((cell) => cell.x !== x || cell.y !== y), { x, y, tileX, tileY }]
+export function paintCell(cells: readonly TileCell[], x: number, y: number, tilesetId: string | null, tileX: number, tileY: number): TileCell[] {
+  return [...cells.filter((cell) => cell.x !== x || cell.y !== y), { x, y, tilesetId, tileX, tileY }]
 }
 
 export function eraseCell(cells: readonly TileCell[], x: number, y: number): TileCell[] {
   return cells.filter((cell) => cell.x !== x || cell.y !== y)
 }
 
-export function paintCells(cells: readonly TileCell[], points: readonly { x: number; y: number }[], tileX: number, tileY: number): TileCell[] {
-  return points.reduce((current, point) => paintCell(current, point.x, point.y, tileX, tileY), [...cells])
+export function paintCells(
+  cells: readonly TileCell[],
+  points: readonly { x: number; y: number }[],
+  tilesetId: string | null,
+  tileX: number,
+  tileY: number
+): TileCell[] {
+  return points.reduce((current, point) => paintCell(current, point.x, point.y, tilesetId, tileX, tileY), [...cells])
 }
 
 export function eraseCells(cells: readonly TileCell[], points: readonly { x: number; y: number }[]): TileCell[] {
@@ -150,12 +190,12 @@ export function fillRegion(
   rows: number,
   x: number,
   y: number,
-  paint: { tileX: number; tileY: number } | null
+  paint: { tilesetId: string | null; tileX: number; tileY: number } | null
 ): TileCell[] {
   if (x < 0 || y < 0 || x >= cols || y >= rows) return [...cells]
   const target = readCell(cells, x, y)
-  const targetKey = target ? `${target.tileX},${target.tileY}` : ''
-  const paintKey = paint ? `${paint.tileX},${paint.tileY}` : ''
+  const targetKey = tileKey(target)
+  const paintKey = paint ? tileKey(paint) : ''
   if (targetKey === paintKey) return [...cells]
   const kept = new Map<string, TileCell>()
   for (const cell of cells) {
@@ -170,10 +210,10 @@ export function fillRegion(
     if (seen.has(key)) continue
     if (current.x < 0 || current.y < 0 || current.x >= cols || current.y >= rows) continue
     const existing = kept.get(key)
-    const keyNow = existing ? `${existing.tileX},${existing.tileY}` : ''
+    const keyNow = tileKey(existing)
     if (keyNow !== targetKey) continue
     seen.add(key)
-    if (paint) kept.set(key, { x: current.x, y: current.y, tileX: paint.tileX, tileY: paint.tileY })
+    if (paint) kept.set(key, { x: current.x, y: current.y, tilesetId: paint.tilesetId, tileX: paint.tileX, tileY: paint.tileY })
     else kept.delete(key)
     stack.push(
       { x: current.x + 1, y: current.y },
@@ -206,8 +246,12 @@ export function tilesetFor(tilesetId: string | null, override: { tilesetRef?: st
   return tilesetById(assets, tilesetId)
 }
 
-export function imageForTileset(tileset: TilesetAsset, assets: Iterable<Asset>): ImageAsset | null {
+export function imageForTileset(tileset: TilesetAsset, assets: AssetList): ImageAsset | null {
   if (!tileset.imageId) return null
+  if (assets instanceof Map) {
+    const asset = assets.get(tileset.imageId)
+    return asset?.type === 'image' ? asset : null
+  }
   for (const asset of assets) {
     if (asset.type === 'image' && asset.id === tileset.imageId) return asset
   }
@@ -236,7 +280,8 @@ export function placedTile(tileset: TilesetAsset, image: ImageAsset, tileX: numb
       height: span.height * tileset.tileHeight,
       imageWidth: image.width,
       imageHeight: image.height
-    }
+    },
+    imagePath: image.file
   }
 }
 
@@ -251,19 +296,47 @@ export function tileDraws(
   return draw ? [{ ...draw, key: 'tile' }] : []
 }
 
-export function tilemapDraws(tileset: TilesetAsset, image: ImageAsset, cells: readonly TileCell[]): TileDraw[] {
+export function tilemapDraws(cells: readonly TileCell[], tileWidth: number, tileHeight: number, assets: AssetList): TileDraw[] {
+  if (tileWidth < 1 || tileHeight < 1) return []
+  const sources = new Map<string, { tileset: TilesetAsset; image: ImageAsset } | null>()
+  const sourceFor = (id: string | null): { tileset: TilesetAsset; image: ImageAsset } | null => {
+    const key = id ?? ''
+    const cached = sources.get(key)
+    if (cached !== undefined) return cached
+    const tileset = tilesetFrom(assets, id)
+    const image = tileset ? imageForTileset(tileset, assets) : null
+    const found = tileset && image?.file ? { tileset, image } : null
+    sources.set(key, found)
+    return found
+  }
   const ordered = [...cells].sort((left, right) => left.y - right.y || left.x - right.x)
   const draws: TileDraw[] = []
   for (const cell of ordered) {
-    const draw = placedTile(tileset, image, cell.tileX, cell.tileY, {
-      x: cell.x * tileset.tileWidth,
-      y: cell.y * tileset.tileHeight,
-      width: tileset.tileWidth,
-      height: tileset.tileHeight
+    const source = sourceFor(cell.tilesetId)
+    if (!source) continue
+    const draw = placedTile(source.tileset, source.image, cell.tileX, cell.tileY, {
+      x: cell.x * tileWidth,
+      y: cell.y * tileHeight,
+      width: tileWidth,
+      height: tileHeight
     })
     if (draw) draws.push({ ...draw, key: `${cell.x},${cell.y}` })
   }
   return draws
+}
+
+function tilesetFrom(assets: AssetList, id: string | null): TilesetAsset | null {
+  if (!id) return null
+  if (assets instanceof Map) {
+    const asset = assets.get(id)
+    return asset?.type === 'tileset' ? asset : null
+  }
+  return tilesetById(assets, id)
+}
+
+function tileKey(cell: { tilesetId?: string | null; tileX: number; tileY: number } | null | undefined): string {
+  if (!cell) return ''
+  return `${cell.tilesetId ?? ''}:${cell.tileX},${cell.tileY}`
 }
 
 function signedTiles(size: number, step: number): number {

@@ -25,7 +25,7 @@ import { canvasColliders, containingPoint, overlapping, type WorldCollider } fro
 import { compositeById, instanceEnabled, instanceVisible, resolvePiece, scenePieceAllows, visitPieces } from './composites'
 import { readComponentProperty, writeComponentProperty, type SceneOverrides, type ScriptValue } from './overrides'
 import { assetLocationOf, findAssetByLocation } from './refs'
-import { imageForTileset, indexInTileset, mapSize, paintCell, readCell, tilesetFor } from './tiles'
+import { imageForTileset, indexInTileset, mapSize, paintCell, readCell, tilemapCellSize, tilesetById } from './tiles'
 import { parseSceneNodeId, parseSharedSceneId, sceneById, sharedSceneId, viewerScene } from './sceneCamera'
 import { KEYS } from './keys'
 import { type SavedOverride, type SavedValue, type SaveKind, slotNumber } from './saves'
@@ -1357,18 +1357,15 @@ export class LuaHost {
       const x = this.wholeArg(L, 2, 'getTile')
       const y = this.wholeArg(L, 3, 'getTile')
       const override = object.frame.overrides[object.componentId]
-      const tileset = tilesetFor(component.tilesetId, override, this.hooks.assets())
-      if (!tileset) {
-        lua.lua_pushnil(L)
-        return 1
-      }
-      const size = mapSize(component.width, component.height, tileset.tileWidth, tileset.tileHeight)
+      const grid = tilemapCellSize(component, this.hooks.assets())
+      const size = mapSize(component.width, component.height, grid.tileWidth, grid.tileHeight)
       if (x < 0 || y < 0 || x >= size.cols || y >= size.rows) {
         lua.lua_pushnil(L)
         return 1
       }
       const cell = readCell(override?.cells ?? component.cells, x, y)
-      if (!cell) {
+      const tileset = cell ? tilesetById(this.hooks.assets(), cell.tilesetId) : null
+      if (!cell || !tileset) {
         lua.lua_pushnil(L)
         return 1
       }
@@ -1393,17 +1390,17 @@ export class LuaHost {
       if (!object || object.kind !== 'component' || component?.type !== 'tilemap') throw new Error('setTile expects a tilemap.')
       const x = this.wholeArg(L, 2, 'setTile')
       const y = this.wholeArg(L, 3, 'setTile')
-      const tileX = this.wholeArg(L, 4, 'setTile')
-      const tileY = this.wholeArg(L, 5, 'setTile')
+      const path = this.pathArg(L, 4, 'setTile')
+      const tileX = this.wholeArg(L, 5, 'setTile')
+      const tileY = this.wholeArg(L, 6, 'setTile')
       const override = object.frame.overrides[object.componentId]
-      const tileset = tilesetFor(component.tilesetId, override, this.hooks.assets())
-      if (!tileset) throw new Error('This tilemap has no tileset.')
-      const size = mapSize(component.width, component.height, tileset.tileWidth, tileset.tileHeight)
+      const { tileset, image } = this.requireTileset(path)
+      const grid = tilemapCellSize(component, this.hooks.assets())
+      const size = mapSize(component.width, component.height, grid.tileWidth, grid.tileHeight)
       if (x < 0 || y < 0 || x >= size.cols || y >= size.rows) throw new Error('That cell is outside the tilemap.')
-      const image = imageForTileset(tileset, this.hooks.assets())
       if (!indexInTileset(tileset, image, tileX, tileY)) throw new Error('That tile is outside the tileset.')
       const current = { ...(override ?? {}) }
-      current.cells = paintCell(current.cells ?? component.cells.map((cell) => ({ ...cell })), x, y, tileX, tileY)
+      current.cells = paintCell(current.cells ?? component.cells.map((cell) => ({ ...cell })), x, y, tileset.id, tileX, tileY)
       object.frame.overrides[object.componentId] = current
       this.hooks.changed()
       return 0

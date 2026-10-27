@@ -93,8 +93,7 @@ const fieldsByType: Record<MenuComponent['type'], Suggestion[]> = {
   ],
   tilemap: [
     { label: 'getTile', insertText: 'getTile(${1:x}, ${2:y})', kind: 'function', detail: 'Tileset path, column, and row at a cell. Nil when that cell is empty' },
-    { label: 'setTile', insertText: 'setTile(${1:x}, ${2:y}, ${3:column}, ${4:row})', kind: 'function', detail: 'Paint a tile from this map\'s tileset. The chosen cell lands on the map cell' },
-    { label: 'tileset', insertText: 'tileset', kind: 'field', detail: 'Tileset path' }
+    { label: 'setTile', insertText: 'setTile(${1:x}, ${2:y}, ${3:tileset}, ${4:column}, ${5:row})', kind: 'function', detail: 'Paint a tile from a tileset onto this cell. The chosen cell lands on the map cell' }
   ],
   collider: [
     { label: 'collisionWith', insertText: 'collisionWith({${1:"solid"}})', kind: 'function', detail: 'Other colliders on this canvas that overlap and have any of these tags' },

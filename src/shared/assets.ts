@@ -372,11 +372,19 @@ function parseComponent(value: unknown): MenuComponent | null {
     return { ...base, type, tilesetId: idOrNull(value.tilesetId), tileX: Math.max(0, Math.floor(num(value.tileX, 0))), tileY: Math.max(0, Math.floor(num(value.tileY, 0))) }
   }
   if (type === 'tilemap') {
+    const tilesetId = idOrNull(value.tilesetId)
     const cells = Array.isArray(value.cells) ? value.cells.flatMap((item) => {
-      const cell = parseTileCell(item)
+      const cell = parseTileCell(item, tilesetId)
       return cell ? [cell] : []
     }) : []
-    return { ...base, type, tilesetId: idOrNull(value.tilesetId), cells }
+    return {
+      ...base,
+      type,
+      tilesetId,
+      tileWidth: Math.max(0, Math.floor(num(value.tileWidth, 0))),
+      tileHeight: Math.max(0, Math.floor(num(value.tileHeight, 0))),
+      cells
+    }
   }
   if (type === 'collider') {
     return {
@@ -393,14 +401,14 @@ function parseComponent(value: unknown): MenuComponent | null {
   return { ...base, type, options: parseOptions(value.options), value: str(value.value), ...textStyle(value), panelId }
 }
 
-function parseTileCell(value: unknown): TileCell | null {
+function parseTileCell(value: unknown, fallbackTilesetId: string | null): TileCell | null {
   if (!isRecord(value)) return null
   const x = Math.floor(num(value.x, -1))
   const y = Math.floor(num(value.y, -1))
   const tileX = Math.floor(num(value.tileX, -1))
   const tileY = Math.floor(num(value.tileY, -1))
   if (x < 0 || y < 0 || tileX < 0 || tileY < 0) return null
-  return { x, y, tileX, tileY }
+  return { x, y, tileX, tileY, tilesetId: idOrNull(value.tilesetId) ?? fallbackTilesetId }
 }
 
 function parseTileSpan(value: unknown): TileSpan | null {
@@ -848,7 +856,14 @@ export function createTileComponent(components: MenuComponent[]): TileComponent 
 }
 
 export function createTilemapComponent(components: MenuComponent[]): TilemapComponent {
-  return { ...componentBase(components, 'Tilemap', { x: 8, y: 8, width: 64, height: 64 }), type: 'tilemap', tilesetId: null, cells: [] }
+  return {
+    ...componentBase(components, 'Tilemap', { x: 8, y: 8, width: 64, height: 64 }),
+    type: 'tilemap',
+    tilesetId: null,
+    tileWidth: 16,
+    tileHeight: 16,
+    cells: []
+  }
 }
 
 export function createColliderComponent(components: MenuComponent[]): ColliderComponent {
@@ -1188,7 +1203,15 @@ function remapComponent(component: MenuComponent, idMap: Map<string, string>): M
   if (component.type === 'button') return { ...component, scriptId, buttonId: remapId(component.buttonId, idMap) }
   if (component.type === 'composite') return { ...component, scriptId, compositeId: remapId(component.compositeId, idMap) }
   if (component.type === 'sceneViewer') return { ...component, scriptId, sceneId: remapId(component.sceneId, idMap) }
-  if (component.type === 'tile' || component.type === 'tilemap') return { ...component, scriptId, tilesetId: remapId(component.tilesetId, idMap) }
+  if (component.type === 'tile') return { ...component, scriptId, tilesetId: remapId(component.tilesetId, idMap) }
+  if (component.type === 'tilemap') {
+    return {
+      ...component,
+      scriptId,
+      tilesetId: remapId(component.tilesetId, idMap),
+      cells: component.cells.map((cell) => ({ ...cell, tilesetId: remapId(cell.tilesetId, idMap) }))
+    }
+  }
   if (component.type === 'collider') return { ...component, scriptId }
   return { ...component, scriptId, panelId: remapId(component.panelId, idMap) }
 }

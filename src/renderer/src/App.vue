@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import type { RecentProject } from '@shared/recent'
 import { usePlayStore } from '@/stores/play'
 import { useProjectStore } from '@/stores/project'
@@ -17,11 +17,13 @@ import ScriptEditor from './components/ScriptEditor.vue'
 import Modal from './components/Modal.vue'
 import ProjectTree from './components/ProjectTree.vue'
 import WelcomeScreen from './components/WelcomeScreen.vue'
+import { nextTabScroll, tabWheelDelta } from './tabStrip'
 
 const project = useProjectStore()
 const session = useSessionStore()
 const play = usePlayStore()
 const creating = ref(false)
+const tabStrip = ref<HTMLElement | null>(null)
 const projectName = ref('Untitled Game')
 const recents = ref<RecentProject[]>([])
 
@@ -87,6 +89,38 @@ function tabTitle(id: string): string {
   return project.asset(id)?.name ?? 'Menu'
 }
 
+function onTabWheel(event: WheelEvent): void {
+  const strip = tabStrip.value
+  if (!strip || strip.scrollWidth <= strip.clientWidth) return
+  const delta = tabWheelDelta(event.deltaX, event.deltaY, event.deltaMode)
+  if (delta === 0) return
+  strip.scrollLeft += delta
+  event.preventDefault()
+}
+
+watch(tabStrip, (strip, _, onCleanup) => {
+  if (!strip) return
+  strip.addEventListener('wheel', onTabWheel, { passive: false })
+  onCleanup(() => strip.removeEventListener('wheel', onTabWheel))
+})
+
+function revealActiveTab(): void {
+  const strip = tabStrip.value
+  const active = strip?.querySelector<HTMLElement>('.tab.active')
+  if (!strip || !active) return
+  const stripBox = strip.getBoundingClientRect()
+  const tabBox = active.getBoundingClientRect()
+  const itemLeft = strip.scrollLeft + (tabBox.left - stripBox.left)
+  strip.scrollLeft = nextTabScroll(strip.scrollLeft, strip.clientWidth, itemLeft, tabBox.width)
+}
+
+watch(
+  () => (project.isOpen ? project.workspace.activeTab : ''),
+  () => {
+    void nextTick(revealActiveTab)
+  }
+)
+
 function scriptTitle(key: string): string {
   if (key.startsWith('asset:')) return project.asset(key.slice(6))?.name ?? 'Script'
   if (key.startsWith('menu:')) {
@@ -149,7 +183,7 @@ function scriptTitle(key: string): string {
         <ProjectTree />
       </aside>
       <main class="center-pane">
-        <div class="tab-strip">
+        <div ref="tabStrip" class="tab-strip">
           <button class="tab" :class="{ active: project.workspace.activeTab === 'game' }" type="button" @click="project.setTab('game')">
             <span>Game</span>
           </button>

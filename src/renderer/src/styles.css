@@ -66,15 +66,22 @@ input, textarea { user-select: text; }
 .properties-entry { min-height: 28px; padding: 0 12px; }
 .properties-entry .row-name { font-weight: 650; }
 
-.tab-strip { display: flex; gap: 4px; padding: 8px 8px 0; border-bottom: 1px solid var(--line); background: #201c18; }
+.tab-strip {
+  display: flex; gap: 4px; min-width: 0; padding: 8px 8px 0;
+  border-bottom: 1px solid var(--line); background: #201c18;
+  overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin;
+}
+.tab-strip::-webkit-scrollbar { height: 8px; }
+.tab-strip::-webkit-scrollbar-thumb { background: #5c4d42; border-radius: 8px; }
+.tab-strip::-webkit-scrollbar-track { background: transparent; }
 .tab {
-  display: flex; align-items: center; gap: 8px; max-width: 220px;
+  display: flex; align-items: center; gap: 8px; flex: none; max-width: 220px;
   border: 1px solid transparent; border-bottom: 0; background: transparent; color: var(--muted);
   border-radius: 8px 8px 0 0; padding: 8px 10px;
 }
 .tab.active { background: var(--bg); color: var(--text); border-color: var(--line); }
-.tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tab-close { border: 0; background: transparent; color: var(--faint); padding: 0 2px; }
+.tab > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-close { flex: none; border: 0; background: transparent; color: var(--faint); padding: 0 2px; }
 .tab-body { flex: 1; min-height: 0; position: relative; }
 
 .welcome { flex: 1; min-height: 0; display: grid; place-items: center; background: radial-gradient(circle at top, #3a241c, var(--bg) 46%); }
@@ -244,6 +251,7 @@ input, textarea { user-select: text; }
 .tileset-merge, .tileset-draft { position: absolute; box-shadow: inset 0 0 0 2px #e8946a; pointer-events: none; }
 .tileset-merge.selected { box-shadow: inset 0 0 0 2px #fff; }
 .tilemap-bar { display: flex; gap: 16px; align-items: flex-start; padding: 8px 12px; border-bottom: 1px solid var(--line); max-height: 240px; }
+.tilemap-palette { display: flex; flex-direction: column; gap: 8px; width: 220px; flex: none; }
 .tilemap-tools { display: flex; flex-direction: column; gap: 6px; flex: 0 0 280px; }
 .tilemap-tool-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .tilemap-swatches { display: grid; gap: 2px; overflow: auto; max-height: 220px; }

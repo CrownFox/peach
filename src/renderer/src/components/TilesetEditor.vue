@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { fittedMerges, mergeAt, spansOverlap, tileGrid } from '@shared/tiles'
+import { fittedMerges, mergeAt, spansOverlap, tileAtPoint, tileGrid } from '@shared/tiles'
 import type { TileSpan } from '@shared/types'
 import { fileUrl } from '@/thumbs'
 import { useProjectStore } from '@/stores/project'
@@ -76,12 +76,21 @@ function setTileSize(key: 'tileWidth' | 'tileHeight', event: Event): void {
 }
 
 function cellAt(event: PointerEvent): { x: number; y: number } | null {
-  if (!sheet.value || !asset.value) return null
-  const bounds = sheet.value.getBoundingClientRect()
-  const x = Math.floor((event.clientX - bounds.left) / asset.value.tileWidth)
-  const y = Math.floor((event.clientY - bounds.top) / asset.value.tileHeight)
-  if (x < 0 || y < 0 || x >= grid.value.cols || y >= grid.value.rows) return null
-  return { x, y }
+  const host = sheet.value
+  if (!host || !asset.value) return null
+  const bounds = host.getBoundingClientRect()
+  return tileAtPoint(
+    event.clientX - bounds.left,
+    event.clientY - bounds.top,
+    bounds.width,
+    bounds.height,
+    host.clientWidth,
+    host.clientHeight,
+    asset.value.tileWidth,
+    asset.value.tileHeight,
+    grid.value.cols,
+    grid.value.rows
+  )
 }
 
 function spanBetween(start: { x: number; y: number }, end: { x: number; y: number }): TileSpan {
