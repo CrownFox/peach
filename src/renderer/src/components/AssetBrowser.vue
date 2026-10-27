@@ -3,7 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { parentPath } from '@shared/paths'
 import type { TreeNode } from '@shared/types'
 import { closePicker, pickerRequest } from '@/picker'
-import { fileUrl, thumbnailFile } from '@/thumbs'
+import { thumbnailUrl } from '@/canvasThumb'
+import { hasThumbnail } from '@/thumbs'
 import { useProjectStore } from '@/stores/project'
 
 const project = useProjectStore()
@@ -27,6 +28,8 @@ const folders = computed(() => {
   return list
 })
 
+const visual = computed(() => (pickerRequest.value ? hasThumbnail(pickerRequest.value.type) : false))
+
 const assets = computed(() => {
   const type = pickerRequest.value?.type
   if (!type) return []
@@ -36,6 +39,10 @@ const assets = computed(() => {
 
 function confirmSelection(): void {
   if (selectedId.value) closePicker(selectedId.value)
+}
+
+function preview(id: string): string {
+  return thumbnailUrl(project.assets, id)
 }
 </script>
 
@@ -57,7 +64,7 @@ function confirmSelection(): void {
             {{ item.name }}
           </button>
         </div>
-        <div class="thumb-grid">
+        <div v-if="visual" class="thumb-grid">
           <button
             v-for="asset in assets"
             :key="asset.id"
@@ -67,9 +74,23 @@ function confirmSelection(): void {
             @click="selectedId = asset.id"
             @dblclick="closePicker(asset.id)"
           >
-            <img v-if="fileUrl(thumbnailFile(project.assets, asset.id))" :src="fileUrl(thumbnailFile(project.assets, asset.id))" alt="" />
+            <img v-if="preview(asset.id)" :src="preview(asset.id)" alt="" />
             <span v-else class="thumb-fallback"></span>
             <span>{{ asset.name }}</span>
+          </button>
+          <p v-if="assets.length === 0" class="tree-hint">This folder has no {{ pickerRequest.type }} assets.</p>
+        </div>
+        <div v-else class="asset-list">
+          <button
+            v-for="asset in assets"
+            :key="asset.id"
+            class="asset-row"
+            :class="{ selected: selectedId === asset.id }"
+            type="button"
+            @click="selectedId = asset.id"
+            @dblclick="closePicker(asset.id)"
+          >
+            {{ asset.name }}
           </button>
           <p v-if="assets.length === 0" class="tree-hint">This folder has no {{ pickerRequest.type }} assets.</p>
         </div>

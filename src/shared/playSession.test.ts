@@ -966,6 +966,107 @@ describe('play session', () => {
     expect(quiet.logs.filter((entry) => entry.tone === 'error')).toEqual([])
   })
 
+  it('keeps a persistent scene through menu changes and starts it over on restart', () => {
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    town.persistent = true
+    town.script = `local n = 0
+      function onLoad()
+        n = 1
+        print("load")
+      end
+      function onUpdate(dt)
+        n = n + 1
+        self.hero.x = n
+      end`
+    town.components = [button('hero', 'hero')]
+    const camera = createMenuComponent('sceneViewer', [])
+    camera.id = 'camera'
+    camera.handle = 'camera'
+    if (camera.type === 'sceneViewer') camera.sceneId = 'town'
+    const opener = button('open', 'open', `function onInteract()
+      game.openModal("Dialog")
+    end`)
+    const main = menu('main', 'Main Menu.menu.json', '', [camera, opener])
+    const next = menu('next', 'Next.menu.json', '', [camera])
+    const hiding = menu('hiding', 'Hiding.menu.json', `function onLoad()
+      game.currentMenu.camera.visible = false
+    end`, [camera])
+    const dialog = menu('dialog', 'Dialog.menu.json', '', [
+      button('close', 'close', `function onInteract()
+        game.closeModal(game.currentModal)
+      end`)
+    ])
+    const assets = [main, next, hiding, dialog, town, plate, plateButton]
+    const session = start(assets, 'main')
+    const heroX = (): number | undefined => session.currentOverrides()['scene:town/hero']?.x
+    const loads = (): number => session.logs.filter((entry) => entry.text === 'load').length
+    session.tick(16)
+    expect(heroX()).toBe(2)
+    expect(loads()).toBe(1)
+    session.navigate('next')
+    session.tick(16)
+    expect(heroX()).toBe(3)
+    expect(loads()).toBe(1)
+    session.navigate('hiding')
+    session.tick(16)
+    expect(heroX()).toBe(3)
+    expect(loads()).toBe(1)
+    session.back()
+    session.tick(16)
+    expect(heroX()).toBe(4)
+    expect(loads()).toBe(1)
+    session.back()
+    session.activate('open')
+    session.tick(16)
+    expect(heroX()).toBe(4)
+    session.activate('close')
+    session.tick(16)
+    expect(heroX()).toBe(5)
+    expect(loads()).toBe(1)
+    session.reset('main')
+    session.tick(16)
+    expect(heroX()).toBe(2)
+    expect(loads()).toBe(1)
+    town.script = `function onLoad()
+      print("fresh")
+    end
+    function onUpdate(dt)
+      self.hero.x = 1
+    end`
+    session.navigate('next')
+    session.tick(16)
+    expect(heroX()).toBe(1)
+    expect(session.logs.map((entry) => entry.text)).toContain('fresh')
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('starts a scene over when the next menu shows it', () => {
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    town.script = `local n = 0
+      function onLoad()
+        n = 1
+        print("load")
+      end
+      function onUpdate(dt)
+        n = n + 1
+        self.hero.x = n
+      end`
+    town.components = [button('hero', 'hero')]
+    const camera = createMenuComponent('sceneViewer', [])
+    camera.id = 'camera'
+    camera.handle = 'camera'
+    if (camera.type === 'sceneViewer') camera.sceneId = 'town'
+    const main = menu('main', 'Main Menu.menu.json', '', [camera])
+    const next = menu('next', 'Next.menu.json', '', [camera])
+    const session = start([main, next, town, plate, plateButton], 'main')
+    session.tick(16)
+    session.navigate('next')
+    session.tick(16)
+    expect(session.currentOverrides()['scene:town/hero']?.x).toBe(2)
+    expect(session.logs.filter((entry) => entry.text === 'load')).toHaveLength(2)
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
   it('reports the visible scene size from the viewer width and height', () => {
     const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
     town.script = `function onUpdate(dt)
@@ -1652,5 +1753,38 @@ end`
     ])
     expect(session.currentOverrides().solid?.x).toBe(100)
     expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('sets z on a component inside a Z field and leaves the saved number alone', () => {
+    const hero = createMenuComponent('label', [])
+    hero.id = 'hero'
+    hero.handle = 'hero'
+    hero.y = 40
+    hero.z = 2
+    const field = createMenuComponent('zField', [])
+    if (field.type !== 'zField') throw new Error('field')
+    field.id = 'layer'
+    field.children = [hero]
+    const back = createMenuComponent('label', [])
+    back.id = 'back'
+    back.handle = 'back'
+    const main = menu(
+      'main',
+      'Main.menu.json',
+      `function onUpdate()
+        print(self.hero.z)
+        self.hero.z = self.hero.y
+        print(self.hero.z)
+        self.back.z = 1
+      end`,
+      [field, back]
+    )
+    const session = start([main], 'main')
+    session.tick(16)
+    expect(session.logs.filter((entry) => entry.tone !== 'error').map((entry) => entry.text)).toEqual(['2.0', '40.0'])
+    expect(session.currentOverrides().hero?.z).toBe(40)
+    expect(hero.z).toBe(2)
+    expect(session.currentOverrides().back?.z).toBeUndefined()
+    expect(session.logs.some((entry) => entry.tone === 'error' && entry.text.includes('Z field'))).toBe(true)
   })
 })

@@ -102,6 +102,10 @@ function walk(
     }
     const drawFlipX = flipX !== component.width < 0
     const drawFlipY = flipY !== component.height < 0
+    if (component.type === 'zField') {
+      walk(component.children, canvasWidth, canvasHeight, content, parent, stack, ancestorEnabled, flipX, flipY, assets, overrides, found)
+      continue
+    }
     if (component.type === 'sceneViewer') continue
     if (component.type === 'composite') {
       const composite = compositeById(assets, component.compositeId)

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { doodadScripts } from '@shared/books'
 import { createMenuComponent, duplicateMenuComponent } from '@shared/assets'
+import { canvasComponents, findComponent, placeInCanvas, type LayerPlace } from '@shared/zField'
 import { componentScriptTemplate } from '@shared/componentScript'
 import { joinPath } from '@shared/paths'
 import { buildTree, expandFolderPath } from '@shared/tree'
@@ -68,21 +69,40 @@ export const useProjectStore = defineStore('project', {
       }
     },
     componentExists(componentId: string): boolean {
-      return this.assets.some((asset) => isCanvas(asset) && asset.components.some((component) => component.id === componentId))
+      return this.assets.some((asset) => isCanvas(asset) && canvasComponents(asset.components).some((component) => component.id === componentId))
     },
-    async openProject(dir: string) {
+    async openProject(dir: string): Promise<'opened' | 'unsaved' | 'failed'> {
+      let result: 'opened' | 'unsaved' | 'failed' = 'failed'
       await this.run(async () => {
+        if (this.projectDir && !(await this.flushAll())) {
+          result = 'unsaved'
+          return
+        }
         const snapshot = await window.peach.openProject(dir)
         this.applySnapshot(snapshot, true)
+        this.releaseVisit()
         const session = useSessionStore()
         if (snapshot.warnings.length > 0) session.info(snapshot.warnings.join(' '))
+        result = 'opened'
       })
+      return result
     },
     async createProject(parentDir: string, name: string) {
       await this.run(async () => {
+        if (this.projectDir && !(await this.flushAll())) return
         const snapshot = await window.peach.createProject(parentDir, name)
         this.applySnapshot(snapshot, true)
+        this.releaseVisit()
       })
+    },
+    releaseVisit(): void {
+      const session = useSessionStore()
+      session.clearBanner()
+      session.selectedTreePath = ''
+      session.selectedComponentId = null
+      session.tilemapEdit = null
+      session.renamingPath = null
+      session.focusNameAssetId = null
     },
     async createFolder(parentRelative: string) {
       this.expandFolder(parentRelative)
@@ -250,7 +270,7 @@ export const useProjectStore = defineStore('project', {
     },
     createComponentScript(menuId: string, componentId: string) {
       const menu = this.asset(menuId)
-      const component = menu && isCanvas(menu) ? menu.components.find((item) => item.id === componentId) : null
+      const component = menu && isCanvas(menu) ? findComponent(menu.components, componentId) : null
       if (!component || component.script.trim()) return
       this.patchComponent(menuId, componentId, (item) => {
         item.script = componentScriptTemplate(item.type)
@@ -336,7 +356,7 @@ export const useProjectStore = defineStore('project', {
       if (key.startsWith('component:')) {
         const [, menuId, componentId] = key.split(':')
         const menu = this.asset(menuId ?? null)
-        return !!menu && isCanvas(menu) && menu.components.some((component) => component.id === componentId)
+        return !!menu && isCanvas(menu) && canvasComponents(menu.components).some((component) => component.id === componentId)
       }
       if (key.startsWith('pagescript:')) {
         const [, bookId, pageId] = key.split(':')
@@ -373,7 +393,7 @@ export const useProjectStore = defineStore('project', {
       if (key.startsWith('component:')) {
         const [, menuId, componentId] = key.split(':')
         const menu = this.asset(menuId ?? null)
-        const component = menu && isCanvas(menu) ? menu.components.find((item) => item.id === componentId) : null
+        const component = menu && isCanvas(menu) ? findComponent(menu.components, componentId) : null
         return component?.script ?? ''
       }
       if (key.startsWith('pagescript:')) {
@@ -433,7 +453,7 @@ export const useProjectStore = defineStore('project', {
       if (this.workspace.activeTab === `menu:${id}`) this.workspace.activeTab = 'editor'
       if (useSessionStore().selectedComponentId) {
         const menu = this.asset(id)
-        if (menu && isCanvas(menu) && menu.components.some((component) => component.id === useSessionStore().selectedComponentId)) {
+        if (menu && isCanvas(menu) && canvasComponents(menu.components).some((component) => component.id === useSessionStore().selectedComponentId)) {
           useSessionStore().selectedComponentId = null
         }
       }
@@ -444,7 +464,7 @@ export const useProjectStore = defineStore('project', {
       if (this.workspace.activeTab === `composite:${id}`) this.workspace.activeTab = 'editor'
       if (useSessionStore().selectedComponentId) {
         const canvas = this.asset(id)
-        if (canvas && isCanvas(canvas) && canvas.components.some((component) => component.id === useSessionStore().selectedComponentId)) {
+        if (canvas && isCanvas(canvas) && canvasComponents(canvas.components).some((component) => component.id === useSessionStore().selectedComponentId)) {
           useSessionStore().selectedComponentId = null
         }
       }
@@ -455,7 +475,7 @@ export const useProjectStore = defineStore('project', {
       if (this.workspace.activeTab === `scene:${id}`) this.workspace.activeTab = 'editor'
       if (useSessionStore().selectedComponentId) {
         const canvas = this.asset(id)
-        if (canvas && isCanvas(canvas) && canvas.components.some((component) => component.id === useSessionStore().selectedComponentId)) {
+        if (canvas && isCanvas(canvas) && canvasComponents(canvas.components).some((component) => component.id === useSessionStore().selectedComponentId)) {
           useSessionStore().selectedComponentId = null
         }
       }
@@ -529,7 +549,7 @@ export const useProjectStore = defineStore('project', {
     patchComponent(menuId: string, componentId: string, recipe: (component: MenuComponent) => void) {
       this.patchAsset(menuId, (asset) => {
         if (!isCanvas(asset)) return
-        const component = asset.components.find((item) => item.id === componentId)
+        const component = findComponent(asset.components, componentId)
         if (!component) return
         recipe(component)
         component.x = Math.round(component.x)
@@ -548,36 +568,86 @@ export const useProjectStore = defineStore('project', {
       })
       if (created) useSessionStore().selectedComponentId = created
     },
+    addFieldComponent(menuId: string, fieldId: string, type: MenuComponent['type']) {
+      if (type === 'zField') return
+      let created = ''
+      this.patchAsset(menuId, (asset) => {
+        if (!isCanvas(asset)) return
+        if (type === 'sceneViewer' && asset.type === 'scene') return
+        const field = asset.components.find((item) => item.id === fieldId)
+        if (!field || field.type !== 'zField') return
+        const component = createMenuComponent(type, canvasComponents(asset.components))
+        component.z = 0
+        field.children.push(component)
+        created = component.id
+      })
+      if (created) useSessionStore().selectedComponentId = created
+    },
     duplicateComponent(menuId: string, componentId: string) {
       let created = ''
       this.patchAsset(menuId, (asset) => {
         if (!isCanvas(asset)) return
         const index = asset.components.findIndex((item) => item.id === componentId)
         const source = asset.components[index]
-        if (!source || index < 0) return
-        const copy = duplicateMenuComponent(source, asset.components, asset.width, asset.height)
-        created = copy.id
-        asset.components.splice(index + 1, 0, copy)
+        if (source && index >= 0) {
+          const copy = duplicateMenuComponent(source, asset.components, asset.width, asset.height)
+          created = copy.id
+          asset.components.splice(index + 1, 0, copy)
+          return
+        }
+        for (const field of asset.components) {
+          if (field.type !== 'zField') continue
+          const childIndex = field.children.findIndex((item) => item.id === componentId)
+          const child = field.children[childIndex]
+          if (!child || childIndex < 0) continue
+          const copy = duplicateMenuComponent(child, field.children, asset.width, asset.height, asset.components)
+          created = copy.id
+          field.children.splice(childIndex + 1, 0, copy)
+          return
+        }
       })
       if (created) useSessionStore().selectedComponentId = created
     },
     removeComponent(menuId: string, componentId: string) {
       this.patchAsset(menuId, (asset) => {
         if (!isCanvas(asset)) return
-        asset.components = asset.components.filter((component) => component.id !== componentId)
+        asset.components = asset.components.flatMap((component) => {
+          if (component.id === componentId) return []
+          if (component.type === 'zField') component.children = component.children.filter((child) => child.id !== componentId)
+          return [component]
+        })
       })
       const session = useSessionStore()
       if (session.tilemapEdit === `${menuId}/${componentId}`) session.tilemapEdit = null
-      if (session.selectedComponentId === componentId) session.selectedComponentId = null
+      if (session.zFieldEdit === `${menuId}/${componentId}`) session.zFieldEdit = null
+      if (session.selectedComponentId && !this.componentExists(session.selectedComponentId)) session.selectedComponentId = null
+    },
+    placeComponent(menuId: string, componentId: string, targetId: string, place: LayerPlace) {
+      this.patchAsset(menuId, (asset) => {
+        if (!isCanvas(asset)) return
+        placeInCanvas(asset.components, componentId, targetId, place)
+      })
     },
     moveComponent(menuId: string, componentId: string, direction: -1 | 1) {
       this.patchAsset(menuId, (asset) => {
         if (!isCanvas(asset)) return
         const index = asset.components.findIndex((component) => component.id === componentId)
-        const nextIndex = index + direction
-        if (index < 0 || nextIndex < 0 || nextIndex >= asset.components.length) return
-        const [component] = asset.components.splice(index, 1)
-        if (component) asset.components.splice(nextIndex, 0, component)
+        if (index >= 0) {
+          const nextIndex = index + direction
+          if (nextIndex < 0 || nextIndex >= asset.components.length) return
+          const [component] = asset.components.splice(index, 1)
+          if (component) asset.components.splice(nextIndex, 0, component)
+          return
+        }
+        for (const field of asset.components) {
+          if (field.type !== 'zField') continue
+          const childIndex = field.children.findIndex((child) => child.id === componentId)
+          const nextIndex = childIndex + direction
+          if (childIndex < 0 || nextIndex < 0 || nextIndex >= field.children.length) continue
+          const [child] = field.children.splice(childIndex, 1)
+          if (child) field.children.splice(nextIndex, 0, child)
+          return
+        }
       })
     },
     scheduleAssetSave(id: string) {
@@ -600,40 +670,45 @@ export const useProjectStore = defineStore('project', {
         void this.flushWorkspace()
       }, 250)
     },
-    async flushAsset(id: string) {
+    async flushAsset(id: string): Promise<boolean> {
       const asset = this.asset(id)
-      if (!asset || !this.projectDir) return
+      if (!asset || !this.projectDir) return true
       try {
         await window.peach.saveAsset(this.projectDir, cloneData(asset))
         if (assetTimers.size === 0 && !workspaceTimer) this.saveState = 'Saved'
+        return true
       } catch (error) {
         this.saveState = 'Not saved'
         useSessionStore().fail(ipcError(error))
+        return false
       }
     },
-    async flushWorkspace() {
-      if (!this.projectDir) return
+    async flushWorkspace(): Promise<boolean> {
+      if (!this.projectDir) return true
       try {
         await window.peach.saveWorkspace(this.projectDir, cloneData(this.workspace))
         if (assetTimers.size === 0) this.saveState = 'Saved'
+        return true
       } catch (error) {
         this.saveState = 'Not saved'
         useSessionStore().fail(ipcError(error))
+        return false
       }
     },
-    async flushAll() {
+    async flushAll(): Promise<boolean> {
       const ids = [...assetTimers.keys()]
       for (const id of ids) {
         const timer = assetTimers.get(id)
         if (timer) clearTimeout(timer)
         assetTimers.delete(id)
       }
-      await Promise.all(ids.map((id) => this.flushAsset(id)))
+      const saved = await Promise.all(ids.map((id) => this.flushAsset(id)))
       if (workspaceTimer) {
         clearTimeout(workspaceTimer)
         workspaceTimer = null
-        await this.flushWorkspace()
+        saved.push(await this.flushWorkspace())
       }
+      return saved.every(Boolean)
     },
     async structural(work: () => Promise<void>) {
       await this.run(async () => {

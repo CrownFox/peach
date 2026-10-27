@@ -1,5 +1,6 @@
 import { sceneById } from './sceneCamera'
-import type { Asset, CanvasAsset, CompositeAsset, MenuAsset, MenuComponent } from './types'
+import type { Asset, CanvasAsset, CompositeAsset, MenuAsset, MenuComponent, ZFieldComponent } from './types'
+import { directPieces, findInList } from './zField'
 
 export type Box = { x: number; y: number; width: number; height: number }
 
@@ -98,7 +99,8 @@ function walkPiece(components: MenuComponent[], id: string, instance: string, as
   let current = components
   let component: MenuComponent | undefined
   for (let index = 0; index < parts.length; index += 1) {
-    component = current.find((item) => item.id === parts[index])
+    const found = findInList(current, parts[index] ?? '')
+    component = found?.component
     if (!component) return null
     if (index === parts.length - 1) break
     if (component.type !== 'composite') return null
@@ -107,6 +109,36 @@ function walkPiece(components: MenuComponent[], id: string, instance: string, as
     current = asset.components
   }
   return component ? { instanceId: instance, component } : null
+}
+
+export function ownsZ(menu: MenuAsset, assets: Iterable<Asset>, id: string): boolean {
+  const shared = /^scene:([^/]+)\/(.+)$/.exec(id)
+  if (shared?.[1] && shared[2]) {
+    const scene = sceneById(assets, shared[1])
+    return scene ? zChild(scene.components, shared[2], assets) : false
+  }
+  return zChild(menu.components, id, assets)
+}
+
+function zChild(components: readonly MenuComponent[], id: string, assets: Iterable<Asset>): boolean {
+  const parts = id.split('/').filter(Boolean)
+  let current = components
+  for (let index = 0; index < parts.length; index += 1) {
+    const found = findInList(current, parts[index] ?? '')
+    if (!found) return false
+    if (index === parts.length - 1) return found.field !== null
+    if (found.component.type !== 'composite') return false
+    const asset = compositeById(assets, found.component.compositeId)
+    if (!asset) return false
+    current = asset.components
+  }
+  return false
+}
+
+function layerShown(field: ZFieldComponent, prefix: string[], overrides: Record<string, { visible?: boolean } | undefined>, sceneId = ''): boolean {
+  const tail = [...prefix, field.id].join('/')
+  const key = sceneId ? `scene:${sceneId}/${tail}` : tail
+  return (overrides[key]?.visible ?? field.visible) !== false
 }
 
 export function instanceVisible(
@@ -118,13 +150,14 @@ export function instanceVisible(
   const parts = id.split('/').filter(Boolean)
   let components = menu.components
   for (let index = 0; index < parts.length; index += 1) {
-    const component = components.find((item) => item.id === parts[index])
-    if (!component) return false
+    const found = findInList(components, parts[index] ?? '')
+    if (!found) return false
+    if (found.field && !layerShown(found.field, parts.slice(0, index), overrides)) return false
     const key = parts.slice(0, index + 1).join('/')
-    if ((overrides[key]?.visible ?? component.visible) === false) return false
+    if ((overrides[key]?.visible ?? found.component.visible) === false) return false
     if (index < parts.length - 1) {
-      if (component.type !== 'composite') return false
-      const asset = compositeById(assets, component.compositeId)
+      if (found.component.type !== 'composite') return false
+      const asset = compositeById(assets, found.component.compositeId)
       if (!asset) return false
       components = asset.components
     }
@@ -142,7 +175,8 @@ export function instanceEnabled(
   let components = menu.components
   let enabled = true
   for (let index = 0; index < parts.length; index += 1) {
-    const component = components.find((item) => item.id === parts[index])
+    const found = findInList(components, parts[index] ?? '')
+    const component = found?.component
     if (!component) return false
     const key = parts.slice(0, index + 1).join('/')
     if (component.type === 'composite' || component.type === 'button') {
@@ -171,8 +205,10 @@ export function scenePieceAllows(
   const parts = localId.split('/').filter(Boolean)
   let components = scene.components
   for (let index = 0; index < parts.length; index += 1) {
-    const component = components.find((item) => item.id === parts[index])
+    const found = findInList(components, parts[index] ?? '')
+    const component = found?.component
     if (!component) return false
+    if (mode === 'visible' && found.field && !layerShown(found.field, parts.slice(0, index), overrides, sceneId)) return false
     const key = `scene:${sceneId}/${parts.slice(0, index + 1).join('/')}`
     if (mode === 'visible' && (overrides[key]?.visible ?? component.visible) === false) return false
     if (mode === 'enabled' && (component.type === 'button' || component.type === 'composite')) {
@@ -191,7 +227,7 @@ export function scenePieceAllows(
 
 export function visitPieces(canvas: CanvasAsset, assets: Iterable<Asset>, visit: (piece: Piece) => void): void {
   const walk = (components: MenuComponent[], parent: string, stack: string[]): void => {
-    for (const component of components) {
+    for (const component of directPieces(components)) {
       const id = instanceId(parent, component.id)
       visit({ instanceId: id, component })
       if (component.type !== 'composite' || !component.compositeId || stack.includes(component.compositeId)) continue

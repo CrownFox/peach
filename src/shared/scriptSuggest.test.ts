@@ -26,12 +26,12 @@ describe('script suggestions', () => {
     expect(play).toContain('text')
     expect(play).toContain('enabled')
     expect(play).not.toContain('image')
-    expect(scriptSuggestions('game.currentMenu.portrait.', menu).map((item) => item.label)).toEqual(['image', 'click', 'x', 'y', 'visible', 'color'])
+    expect(scriptSuggestions('game.currentMenu.portrait.', menu).map((item) => item.label)).toEqual(['image', 'click', 'x', 'y', 'z', 'visible', 'color'])
   })
 
   it('suggests value on a text component and not a click', () => {
     const text: ScriptHints = { self: 'text', handles: [] }
-    expect(scriptSuggestions('self.', text).map((item) => item.label)).toEqual(['value', 'panel', 'x', 'y', 'visible', 'color'])
+    expect(scriptSuggestions('self.', text).map((item) => item.label)).toEqual(['value', 'panel', 'x', 'y', 'z', 'visible', 'color'])
     expect(scriptSuggestions('self:', text)).toEqual([])
   })
 

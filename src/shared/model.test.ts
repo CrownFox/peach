@@ -3,6 +3,8 @@ import { assetDocument, createAsset, createButtonAsset, createButtonComponent, c
 import { intrinsicSize } from './intrinsicSize'
 import { resizeRect, snapTilemapSize, snapToGrid } from './resize'
 import { fillRegion, lineCells, mapSize, placedTile, pruneCells, tileAtPoint, tileSheet, tilemapCellSize } from './tiles'
+import { canvasColliders } from './collisions'
+import { placeInCanvas } from './zField'
 import { writeComponentProperty, type SceneOverrides } from './overrides'
 import { buildScene, devicePixelScale, fitFrame, fittedBorderWidths, nineSliceLayout, snapNineSlice } from './scene'
 import { assetLocation, sanitizeFileStem, uniqueName } from './paths'
@@ -482,6 +484,19 @@ describe('scene', () => {
     expect(top!.tileWidth).toBeGreaterThan(0)
     expect(side!.tileHeight).toBeGreaterThan(0)
   })
+
+  it('keeps a persistent flag on a scene and reads an older scene as not persistent', () => {
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    expect(town.persistent).toBe(false)
+    town.persistent = true
+    const saved = parseAsset(assetDocument(town), 'Town.scene.json')
+    expect(saved.type).toBe('scene')
+    if (saved.type === 'scene') expect(saved.persistent).toBe(true)
+    const older = assetDocument(town)
+    delete older.persistent
+    const parsed = parseAsset(older, 'Town.scene.json')
+    if (parsed.type === 'scene') expect(parsed.persistent).toBe(false)
+  })
 })
 
 describe('documents', () => {
@@ -731,6 +746,44 @@ describe('menu pixels', () => {
     expect(scene[0]?.width).toBeCloseTo((80 / 880) * 100)
     expect(scene[0]?.height).toBeCloseTo((80 / 495) * 100)
     expect(scene[0]?.width).not.toBeCloseTo(scene[0]?.height ?? 0)
+  })
+
+  it('places a label from the alignment square and keeps an older label centered', () => {
+    const older = parseAsset(
+      {
+        formatVersion: 2,
+        id: 'menu',
+        type: 'menu',
+        name: 'Main',
+        width: 200,
+        height: 200,
+        components: [
+          { id: 'old', type: 'label', name: 'Label', x: 8, y: 8, width: 40, height: 20, text: 'Hello' },
+          { id: 'bad', type: 'label', name: 'Bad', x: 8, y: 8, width: 40, height: 20, text: 'Hello', alignX: 'sideways', alignY: 'middle' }
+        ]
+      },
+      'Main.menu.json'
+    )
+    expect(older.type === 'menu' && older.components.map((item) => (item.type === 'label' ? [item.alignX, item.alignY] : []))).toEqual([
+      ['middle', 'center'],
+      ['middle', 'center']
+    ])
+    const placed = parseAsset(
+      {
+        formatVersion: 2,
+        id: 'menu',
+        type: 'menu',
+        name: 'Main',
+        width: 200,
+        height: 200,
+        components: [{ id: 'label', type: 'label', name: 'Label', x: 8, y: 8, width: 80, height: 40, text: 'Hello', alignX: 'right', alignY: 'bottom' }]
+      },
+      'Main.menu.json'
+    )
+    if (placed.type !== 'menu') throw new Error('menu')
+    expect(placed.components[0]).toMatchObject({ alignX: 'right', alignY: 'bottom' })
+    const node = buildScene(placed, []).find((item) => item.kind === 'label')
+    expect(node?.text).toMatchObject({ value: 'Hello', alignX: 'right', alignY: 'bottom' })
   })
 })
 
@@ -1112,5 +1165,178 @@ describe('tiles', () => {
     )
     expect(mixed.find((cell) => cell.x === 0)?.tilesetId).toBe('water')
     expect(mixed.find((cell) => cell.x === 1)?.tilesetId).toBe('trees')
+  })
+})
+
+describe('Z field', () => {
+  function canvas(components: MenuAsset['components']): MenuAsset {
+    return {
+      id: 'menu',
+      type: 'menu',
+      name: 'Main',
+      relativePath: 'Main.menu.json',
+      width: 100,
+      height: 100,
+      gridSize: 16,
+      snapToGrid: false,
+      scriptId: null,
+      script: '',
+      components
+    }
+  }
+
+  it('sorts children by z between the pieces around the field', () => {
+    const back = createMenuComponent('label', [])
+    back.id = 'back'
+    const low = createMenuComponent('label', [])
+    low.id = 'low'
+    low.z = 1
+    const high = createMenuComponent('label', [])
+    high.id = 'high'
+    high.z = 5
+    const tied = createMenuComponent('label', [])
+    tied.id = 'tied'
+    tied.z = 5
+    const field = createMenuComponent('zField', [])
+    if (field.type !== 'zField') throw new Error('field')
+    field.id = 'layer'
+    field.children = [high, low, tied]
+    const front = createMenuComponent('label', [])
+    front.id = 'front'
+    const menu = canvas([back, field, front])
+    expect(buildScene(menu, []).map((node) => node.id)).toEqual(['back', 'low', 'high', 'tied', 'front'])
+    const overrides: SceneOverrides = { low: { z: 9 } }
+    expect(buildScene(menu, [], { overrides }).map((node) => node.id)).toEqual(['back', 'high', 'tied', 'low', 'front'])
+    expect(low.z).toBe(1)
+  })
+
+  it('hides and tints the children with the field, and still collides when the field is hidden', () => {
+    const child = createMenuComponent('label', [])
+    child.id = 'child'
+    const hit = createMenuComponent('collider', [])
+    if (hit.type !== 'collider') throw new Error('collider')
+    hit.id = 'hit'
+    hit.width = 10
+    hit.height = 10
+    const field = createMenuComponent('zField', [])
+    if (field.type !== 'zField') throw new Error('field')
+    field.id = 'layer'
+    field.visible = false
+    field.tint = '#ff0000'
+    field.children = [child, hit]
+    const hidden = buildScene(canvas([field]), [], { showColliders: true })
+    expect(hidden.find((node) => node.id === 'child')?.visible).toBe(false)
+    expect(hidden.find((node) => node.id === 'hit')?.color).toBe('#ff0000')
+    expect(canvasColliders({ components: [field], width: 100, height: 100, assets: [], overrides: {}, prefix: '' }).map((item) => item.id)).toEqual(['hit'])
+  })
+
+  it('keeps a composite inside the field on the canvas id', () => {
+    const mark = createMenuComponent('label', [])
+    mark.id = 'mark'
+    const group = createAsset('composite', 'Group', 'Group.composite.json', 'group')
+    if (group.type !== 'composite') throw new Error('composite')
+    group.components = [mark]
+    const slot = createMenuComponent('composite', [])
+    if (slot.type !== 'composite') throw new Error('slot')
+    slot.id = 'slot'
+    slot.compositeId = 'group'
+    const field = createMenuComponent('zField', [])
+    if (field.type !== 'zField') throw new Error('field')
+    field.children = [slot]
+    expect(buildScene(canvas([field]), [group]).map((node) => node.id)).toEqual(['slot/mark'])
+  })
+
+  it('drops a nested field and keeps a child z', () => {
+    const parsed = parseAsset(
+      {
+        formatVersion: 2,
+        id: 'menu',
+        type: 'menu',
+        name: 'Main',
+        width: 100,
+        height: 100,
+        components: [
+          {
+            id: 'layer',
+            type: 'zField',
+            name: 'Z field',
+            x: 40,
+            y: 12,
+            width: 8,
+            height: 8,
+            children: [
+              { id: 'hero', type: 'label', name: 'Hero', text: 'Hi', z: 3, x: 1, y: 2, width: 8, height: 8 },
+              { id: 'inner', type: 'zField', name: 'Inner', children: [{ id: 'lost', type: 'label', name: 'Lost', text: 'No' }] }
+            ]
+          }
+        ]
+      },
+      'Main.menu.json'
+    )
+    if (parsed.type !== 'menu' || parsed.components[0]?.type !== 'zField') throw new Error('field')
+    expect(parsed.components[0]).toMatchObject({ x: 0, y: 0, width: 0, height: 0 })
+    expect(parsed.components[0].children.map((child) => child.id)).toEqual(['hero'])
+    expect(parsed.components[0].children[0]?.z).toBe(3)
+  })
+
+  it('writes z on a direct child and refuses it elsewhere', () => {
+    const hero = createMenuComponent('label', [])
+    hero.id = 'hero'
+    hero.handle = 'hero'
+    hero.y = 40
+    const field = createMenuComponent('zField', [])
+    if (field.type !== 'zField') throw new Error('field')
+    field.id = 'layer'
+    field.children = [hero]
+    const back = createMenuComponent('label', [])
+    back.id = 'back'
+    const menu = canvas([field, back])
+    const overrides: SceneOverrides = {}
+    writeComponentProperty(menu, 'hero', overrides, 'z', 7, [])
+    expect(overrides.hero?.z).toBe(7)
+    expect(() => writeComponentProperty(menu, 'back', overrides, 'z', 1, [])).toThrow(/Z field/)
+    expect(() => writeComponentProperty(menu, 'layer', overrides, 'x', 4, [])).toThrow(/no position/)
+  })
+
+  it('gives a duplicated field new child ids and handles', () => {
+    const hero = createMenuComponent('label', [])
+    hero.id = 'hero'
+    hero.handle = 'hero'
+    const field = createMenuComponent('zField', [])
+    if (field.type !== 'zField') throw new Error('field')
+    field.id = 'layer'
+    field.children = [hero]
+    const copy = duplicateMenuComponent(field, [field], 100, 100)
+    if (copy.type !== 'zField') throw new Error('copy')
+    expect(copy.children[0]?.id).not.toBe('hero')
+    expect(copy.children[0]?.handle).toBe('hero2')
+    expect(copy.x).toBe(0)
+  })
+
+  it('reorders rows and moves a component into and out of a field', () => {
+    const back = createMenuComponent('label', [])
+    back.id = 'back'
+    const front = createMenuComponent('label', [])
+    front.id = 'front'
+    const hero = createMenuComponent('label', [])
+    hero.id = 'hero'
+    const field = createMenuComponent('zField', [])
+    if (field.type !== 'zField') throw new Error('field')
+    field.id = 'layer'
+    field.children = [hero]
+    const other = createMenuComponent('zField', [])
+    other.id = 'other'
+    const components = [back, field, front, other]
+    expect(placeInCanvas(components, 'front', 'back', 'above')).toBe(true)
+    expect(components.map((item) => item.id)).toEqual(['back', 'front', 'layer', 'other'])
+    expect(placeInCanvas(components, 'front', 'layer', 'inside')).toBe(true)
+    expect(components.map((item) => item.id)).toEqual(['back', 'layer', 'other'])
+    expect(field.children.map((item) => item.id)).toEqual(['hero', 'front'])
+    expect(front.z).toBe(0)
+    expect(placeInCanvas(components, 'other', 'hero', 'below')).toBe(false)
+    expect(placeInCanvas(components, 'front', 'back', 'below')).toBe(true)
+    expect(components.map((item) => item.id)).toEqual(['front', 'back', 'layer', 'other'])
+    expect(field.children.map((item) => item.id)).toEqual(['hero'])
+    expect(front.z).toBeUndefined()
   })
 })

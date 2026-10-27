@@ -20,7 +20,7 @@ export const SCENE_CSS = `
   font: 12px "Segoe UI", sans-serif; text-align: center; padding: 6px; pointer-events: none;
 }
 .scene-node .label {
-  position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  position: absolute; inset: 0; display: none; flex-direction: column; align-items: stretch; justify-content: center;
   text-align: center; pointer-events: none; overflow: hidden; line-height: 1.15;
   padding: 4%; white-space: pre-wrap; overflow-wrap: anywhere;
 }

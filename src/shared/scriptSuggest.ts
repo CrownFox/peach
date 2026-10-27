@@ -100,7 +100,8 @@ const fieldsByType: Record<MenuComponent['type'], Suggestion[]> = {
     { label: 'tags', insertText: 'tags', kind: 'field', detail: 'Names on this collider, such as solid or hurt' },
     { label: 'shape', insertText: 'shape', kind: 'field', detail: '"square" or "circle"' },
     { label: 'enabled', insertText: 'enabled', kind: 'field', detail: 'true or false. False skips this collider' }
-  ]
+  ],
+  zField: []
 }
 
 const collisionAtField: Suggestion = {
@@ -267,11 +268,16 @@ function typesFor(name: string, hints: ScriptHints): MenuComponent['type'][] {
 function componentFields(types: readonly MenuComponent['type'][], methodsOnly: boolean): Suggestion[] {
   const items = types.flatMap((type) => fieldsByType[type] ?? [])
   const chosen = methodsOnly ? items.filter((item) => item.kind === 'function') : items
-  if (!methodsOnly) {
+  const layerOnly = types.length > 0 && types.every((type) => type === 'zField')
+  if (!methodsOnly && !layerOnly) {
     chosen.push({ label: 'x', insertText: 'x', kind: 'field', detail: 'Horizontal position, in the same pixels as the editor' })
     chosen.push({ label: 'y', insertText: 'y', kind: 'field', detail: 'Vertical position, in the same pixels as the editor' })
+    chosen.push({ label: 'z', insertText: 'z', kind: 'field', detail: 'Draw order inside a Z field. Higher draws in front. Equal values keep the order in the field' })
     chosen.push({ label: 'visible', insertText: 'visible', kind: 'field', detail: 'true or false. False hides this component' })
     chosen.push({ label: 'color', insertText: 'color', kind: 'field', detail: 'A color such as "#ff8800". White leaves the component unchanged' })
+  } else if (!methodsOnly) {
+    chosen.push({ label: 'visible', insertText: 'visible', kind: 'field', detail: 'true or false. False hides every component in this field' })
+    chosen.push({ label: 'color', insertText: 'color', kind: 'field', detail: 'A color such as "#ff8800". It tints every component in this field' })
   }
   const seen = new Set<string>()
   return chosen.filter((item) => {

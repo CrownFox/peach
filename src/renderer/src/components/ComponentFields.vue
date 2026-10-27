@@ -4,10 +4,22 @@ import { BUILTIN_FONTS } from '@shared/fonts'
 import { createId } from '@shared/ids'
 import type { ComponentOverride } from '@shared/overrides'
 import { applyIntrinsicSize } from '@shared/intrinsicSize'
-import type { MenuComponent } from '@shared/types'
+import type { LabelAlignX, LabelAlignY, MenuComponent } from '@shared/types'
 import { usePlayStore } from '@/stores/play'
 import { useProjectStore } from '@/stores/project'
 import AssetSelect from './AssetSelect.vue'
+
+const labelSpots: { alignX: LabelAlignX; alignY: LabelAlignY; name: string }[] = [
+  { alignX: 'left', alignY: 'top', name: 'Top left' },
+  { alignX: 'middle', alignY: 'top', name: 'Top middle' },
+  { alignX: 'right', alignY: 'top', name: 'Top right' },
+  { alignX: 'left', alignY: 'center', name: 'Center left' },
+  { alignX: 'middle', alignY: 'center', name: 'Center' },
+  { alignX: 'right', alignY: 'center', name: 'Center right' },
+  { alignX: 'left', alignY: 'bottom', name: 'Bottom left' },
+  { alignX: 'middle', alignY: 'bottom', name: 'Bottom middle' },
+  { alignX: 'right', alignY: 'bottom', name: 'Bottom right' }
+]
 
 const props = defineProps<{ menuId: string; component: MenuComponent }>()
 const project = useProjectStore()
@@ -81,11 +93,19 @@ function setTextRate(event: Event): void {
 
 function setPanel(id: string | null): void {
   patch((component) => {
-    if (component.type === 'image' || component.type === 'button' || component.type === 'composite' || component.type === 'sceneViewer' || component.type === 'tile' || component.type === 'tilemap' || component.type === 'collider') return
+    if (component.type === 'image' || component.type === 'button' || component.type === 'composite' || component.type === 'sceneViewer' || component.type === 'tile' || component.type === 'tilemap' || component.type === 'collider' || component.type === 'zField') return
     component.panelId = id
     if (component.type === 'panel' && id) applyIntrinsicSize(component, project.assets)
   })
   forget('panelRef')
+}
+
+function setLabelAlign(alignX: LabelAlignX, alignY: LabelAlignY): void {
+  patch((component) => {
+    if (component.type !== 'label') return
+    component.alignX = alignX
+    component.alignY = alignY
+  })
 }
 
 function setText(event: Event): void {
@@ -221,7 +241,7 @@ function toggleSelected(id: string, event: Event): void {
 
 <template>
   <AssetSelect
-    v-if="component.type !== 'image' && component.type !== 'button' && component.type !== 'composite' && component.type !== 'sceneViewer' && component.type !== 'tile' && component.type !== 'tilemap' && component.type !== 'collider'"
+    v-if="component.type !== 'image' && component.type !== 'button' && component.type !== 'composite' && component.type !== 'sceneViewer' && component.type !== 'tile' && component.type !== 'tilemap' && component.type !== 'collider' && component.type !== 'zField'"
     label="Panel"
     type="panel"
     clearable
@@ -256,6 +276,21 @@ function toggleSelected(id: string, event: Event): void {
       <input :value="component.text" @input="setText" />
     </label>
   </template>
+  <div v-if="component.type === 'label'" class="field">
+    <span class="field-label">Align</span>
+    <div class="align-pad" role="group" aria-label="Label alignment">
+      <button
+        v-for="spot in labelSpots"
+        :key="`${spot.alignX}-${spot.alignY}`"
+        class="align-spot"
+        :class="{ active: component.alignX === spot.alignX && component.alignY === spot.alignY }"
+        type="button"
+        :aria-label="spot.name"
+        :title="spot.name"
+        @click="setLabelAlign(spot.alignX, spot.alignY)"
+      ></button>
+    </div>
+  </div>
   <label v-if="component.type === 'toggle'" class="check">
     <input type="checkbox" :checked="component.value" @change="setToggle" />
     <span>On</span>

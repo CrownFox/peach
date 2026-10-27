@@ -6,14 +6,16 @@ import { dropdownSelection, groupSelection, rangeNumbers, type ComponentOverride
 import { findAssetByLocation } from './refs'
 import { boxIntersects, clipInset, sceneById, sceneNodeId, viewerCamera, viewerScene } from './sceneCamera'
 import { imageForTileset, mapSize, pruneCells, tileDraws, tilemapCellSize, tilemapDraws, tileSheet, tilesetFor, type TileStamp } from './tiles'
-import type { Asset, ButtonAsset, ButtonSlices, CanvasAsset, ImageAsset, MenuComponent, PanelAsset, SliceFill } from './types'
+import { orderZChildren } from './zField'
+import type { Asset, ButtonAsset, ButtonSlices, CanvasAsset, ImageAsset, LabelAlignX, LabelAlignY, MenuComponent, PanelAsset, SliceFill } from './types'
 
 export type SceneText = {
   value: string
   fontFamily: string
   fontSize: number
   color: string
-  align: 'center' | 'start'
+  alignX: LabelAlignX
+  alignY: LabelAlignY
 }
 
 export type SceneChoice = { id: string; label: string }
@@ -261,6 +263,34 @@ function expand(
   const scaleX = canvasWidth > 0 ? content.width / canvasWidth : 0
   const scaleY = canvasHeight > 0 ? content.height / canvasHeight : 0
   for (const component of components) {
+    if (component.type === 'zField') {
+      const fieldId = instanceId(parent, component.id)
+      const fieldPlaced = options?.overrides?.[fieldId]
+      const fieldShown = ancestorVisible && (fieldPlaced?.visible ?? component.visible)
+      const fieldColor = multiplyColor(parentColor, componentColor(fieldPlaced?.tint ?? component.tint))
+      expand(
+        orderZChildren(component.children, parent, options?.overrides),
+        canvasWidth,
+        canvasHeight,
+        content,
+        parent,
+        stack,
+        ancestorEnabled,
+        fieldShown,
+        fieldColor,
+        rootWidth,
+        rootHeight,
+        assets,
+        options,
+        nodes,
+        clipView,
+        camera,
+        blockViewers,
+        flipX,
+        flipY
+      )
+      continue
+    }
     const id = instanceId(parent, component.id)
     const placed = options?.overrides?.[id]
     const x = typeof placed?.x === 'number' ? placed.x : component.x
@@ -484,18 +514,24 @@ function componentNode(
     node.enabled = false
     return node
   }
+  if (component.type === 'zField') {
+    const node = emptyNode(frame, 'label')
+    node.missing = 'Z field'
+    node.enabled = false
+    return node
+  }
 
   const node = emptyNode(frame, component.type)
   applyPanel(node, component.panelId, override, assets, component.type === 'panel')
   if (component.type === 'panel') return node
   if (component.type === 'pageViewer') {
-    node.text = styledText('', component, 'start')
+    node.text = styledText('', component, 'left', 'center')
     node.page = options?.pages?.[frame.id] ?? previewPage(component, assets)
     node.scrollable = override?.scrollable ?? component.scrollable
     return node
   }
   if (component.type === 'label') {
-    node.text = styledText(override?.text ?? component.text, component, 'center')
+    node.text = styledText(override?.text ?? component.text, component, component.alignX, component.alignY)
     return node
   }
   if (component.type === 'meter') {
@@ -506,21 +542,21 @@ function componentNode(
   }
   if (component.type === 'text' || component.type === 'textarea') {
     const value = typeof override?.value === 'string' ? override.value : component.value
-    node.text = styledText(value || component.placeholder, component, 'start')
+    node.text = styledText(value || component.placeholder, component, 'left', 'center')
     node.control = { kind: component.type, value, placeholder: component.placeholder }
     return node
   }
   if (component.type === 'toggle') {
     const value = typeof override?.value === 'boolean' ? override.value : component.value
     const label = override?.text ?? component.text
-    node.text = styledText(`${value ? '☑' : '☐'} ${label}`.trim(), component, 'start')
+    node.text = styledText(`${value ? '☑' : '☐'} ${label}`.trim(), component, 'left', 'center')
     node.control = { kind: 'toggle', value, label }
     return node
   }
   if (component.type === 'toggleGroup') {
     const value = groupSelection(component, override)
     const labels = component.options.filter((option) => value.includes(option.id)).map((option) => option.label)
-    node.text = styledText(labels.join('\n'), component, 'start')
+    node.text = styledText(labels.join('\n'), component, 'left', 'center')
     node.control = { kind: 'toggleGroup', mode: component.mode, value, options: component.options.map(choice) }
     return node
   }
@@ -528,13 +564,13 @@ function componentNode(
     const range = rangeNumbers(component, override)
     node.fill = fillRatio(range.value, range.min, range.max)
     node.fillColor = component.fillColor
-    node.text = { value: String(range.value), fontFamily: DEFAULT_FONT_FAMILY, fontSize: 32, color: '#ffffff', align: 'center' }
+    node.text = { value: String(range.value), fontFamily: DEFAULT_FONT_FAMILY, fontSize: 32, color: '#ffffff', alignX: 'middle', alignY: 'center' }
     node.control = { kind: 'slider', ...range }
     return node
   }
   const selected = dropdownSelection(component, override)
   const label = component.options.find((option) => option.id === selected)?.label ?? ''
-  node.text = styledText(label, component, 'start')
+  node.text = styledText(label, component, 'left', 'center')
   node.control = { kind: 'dropdown', value: selected, options: component.options.map(choice) }
   return node
 }
@@ -658,7 +694,7 @@ function buttonNode(
 ): SceneNode {
   const textValue = override?.text ?? component.text
   const node = emptyNode(frame, 'button')
-  node.text = styledText(textValue, component, 'center')
+  node.text = styledText(textValue, component, 'middle', 'center')
   node.enabled = override?.enabled ?? component.enabled
   const button = resolveButton(component, override, assets)
   if (!button) {
@@ -722,9 +758,10 @@ function previewPage(component: Extract<MenuComponent, { type: 'pageViewer' }>, 
 function styledText(
   value: string,
   style: { fontFamily: string; fontSize: number; color: string },
-  align: 'center' | 'start'
+  alignX: LabelAlignX,
+  alignY: LabelAlignY
 ): SceneText {
-  return { value, fontFamily: style.fontFamily, fontSize: style.fontSize, color: style.color, align }
+  return { value, fontFamily: style.fontFamily, fontSize: style.fontSize, color: style.color, alignX, alignY }
 }
 
 function choice(option: { id: string; label: string }): SceneChoice {

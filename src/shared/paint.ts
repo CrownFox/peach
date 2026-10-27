@@ -190,8 +190,10 @@ function paintNode(
     label.style.fontFamily = node.text.fontFamily
     label.style.color = node.text.color
     label.style.fontSize = `${node.text.fontSize}cqh`
-    label.style.justifyContent = node.text.align === 'start' ? 'flex-start' : 'center'
-    label.style.textAlign = node.text.align === 'start' ? 'left' : 'center'
+    label.style.flexDirection = 'column'
+    label.style.alignItems = 'stretch'
+    label.style.justifyContent = node.text.alignY === 'top' ? 'flex-start' : node.text.alignY === 'bottom' ? 'flex-end' : 'center'
+    label.style.textAlign = node.text.alignX === 'left' ? 'left' : node.text.alignX === 'right' ? 'right' : 'center'
   } else {
     label.style.display = 'none'
     label.textContent = ''

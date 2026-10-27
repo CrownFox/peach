@@ -66,6 +66,7 @@ export class PlaySession {
     }
     const current = this.frames[this.index]
     this.dismissModals()
+    if (current) this.host?.parkPersistent(current)
     let frame = current
     if (current?.menuId === menuId) {
       this.host?.release(current)
@@ -97,6 +98,8 @@ export class PlaySession {
     if (!this.frames[this.index]) throw new Error('No menu is open.')
     const menu = findAssetByLocation(this.assetsOf(), location, 'menu')
     if (!menu || menu.type !== 'menu') throw new Error(`No menu at "${location}".`)
+    const active = this.modals.at(-1) ?? this.frames[this.index]
+    if (active) this.host?.parkPersistent(active)
     const top = this.modals.at(-1)
     if (top?.menuId === menu.id) {
       this.host?.release(top)
@@ -117,13 +120,18 @@ export class PlaySession {
     for (const item of removed) this.host?.release(item)
     const next = this.modals.at(-1)
     if (next) this.host?.show(next)
-    else this.host?.clearModal()
+    else {
+      this.host?.clearModal()
+      const menu = this.frames[this.index]
+      if (menu) this.host?.show(menu)
+    }
     this.onChange()
   }
 
   back(): void {
     if (this.index <= 0) return
     this.dismissModals()
+    this.parkCurrent()
     this.index -= 1
     this.restore()
   }
@@ -131,6 +139,7 @@ export class PlaySession {
   forward(): void {
     if (this.index >= this.frames.length - 1) return
     this.dismissModals()
+    this.parkCurrent()
     this.index += 1
     this.restore()
   }
@@ -138,6 +147,7 @@ export class PlaySession {
   jump(index: number): void {
     if (index < 0 || index >= this.frames.length || index === this.index) return
     this.dismissModals()
+    this.parkCurrent()
     this.index = index
     this.restore()
   }
@@ -252,6 +262,11 @@ export class PlaySession {
     return { ...(this.frames[this.index]?.overrides ?? {}) }
   }
 
+  private parkCurrent(): void {
+    const frame = this.frames[this.index]
+    if (frame) this.host?.parkPersistent(frame)
+  }
+
   private restore(): void {
     const frame = this.frames[this.index]
     if (frame) {
@@ -300,6 +315,7 @@ export class PlaySession {
     host.restoreState(slot.state)
     this.dismissModals()
     for (const frame of this.frames) host.release(frame)
+    host.forgetPersistent()
     this.frames = frames
     this.index = frames.length - 1
     host.open(current)

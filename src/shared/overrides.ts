@@ -1,4 +1,4 @@
-import { resolvePiece } from './composites'
+import { ownsZ, resolvePiece } from './composites'
 import { componentColor } from './color'
 import { assetLocation } from './paths'
 import { findAssetByLocation } from './refs'
@@ -27,6 +27,7 @@ export type ComponentOverride = {
   visible?: boolean
   x?: number
   y?: number
+  z?: number
   viewX?: number
   viewY?: number
   scale?: number
@@ -136,6 +137,11 @@ export function readComponentProperty(
   if (key === 'visible') return override?.visible ?? component.visible
   if (key === 'x') return typeof override?.x === 'number' ? override.x : component.x
   if (key === 'y') return typeof override?.y === 'number' ? override.y : component.y
+  if (key === 'z') {
+    if (component.type === 'zField') return null
+    const z = typeof override?.z === 'number' ? override.z : component.z
+    return typeof z === 'number' && Number.isFinite(z) ? z : null
+  }
   if (component.type === 'sceneViewer' && key === 'viewX') return typeof override?.viewX === 'number' ? override.viewX : component.viewX
   if (component.type === 'sceneViewer' && key === 'viewY') return typeof override?.viewY === 'number' ? override.viewY : component.viewY
   if (component.type === 'sceneViewer' && key === 'scale') {
@@ -182,6 +188,18 @@ export function writeComponentProperty(
     overrides[componentId] = current
     return
   }
+  if (key === 'z') {
+    if (!ownsZ(menu, assets, componentId)) throw new Error('z is only available on a component inside a Z field.')
+    if (value === null) {
+      delete current.z
+      overrides[componentId] = current
+      return
+    }
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('z expects a number.')
+    current.z = value
+    overrides[componentId] = current
+    return
+  }
   if (value === null) {
     delete current[fieldKey(component, key)]
     overrides[componentId] = current
@@ -215,6 +233,9 @@ function assignProperty(
   value: Exclude<ScriptValue, null>,
   assets: Iterable<Asset>
 ): void {
+  if (component.type === 'zField' && (key === 'x' || key === 'y')) {
+    throw new Error('A Z field has no position. Set z on the components inside it.')
+  }
   if ((component.type === 'button' || component.type === 'label' || component.type === 'toggle') && key === 'text') {
     if (typeof value !== 'string') throw new Error('text expects text.')
     current.text = value
@@ -392,8 +413,8 @@ function acceptsValue(component: MenuComponent): boolean {
   )
 }
 
-function usesPanel(component: MenuComponent): component is Exclude<MenuComponent, { type: 'image' | 'button' | 'composite' | 'sceneViewer' | 'tile' | 'tilemap' | 'collider' }> {
-  return component.type !== 'image' && component.type !== 'button' && component.type !== 'composite' && component.type !== 'sceneViewer' && component.type !== 'tile' && component.type !== 'tilemap' && component.type !== 'collider'
+function usesPanel(component: MenuComponent): component is Exclude<MenuComponent, { type: 'image' | 'button' | 'composite' | 'sceneViewer' | 'tile' | 'tilemap' | 'collider' | 'zField' }> {
+  return component.type !== 'image' && component.type !== 'button' && component.type !== 'composite' && component.type !== 'sceneViewer' && component.type !== 'tile' && component.type !== 'tilemap' && component.type !== 'collider' && component.type !== 'zField'
 }
 
 function cleanTags(tags: readonly string[]): string[] {

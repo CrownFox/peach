@@ -13,8 +13,9 @@ import {
   sanitizeFileStem,
   uniqueName
 } from './paths'
-import { FORMAT_VERSION, DEFAULT_MENU_HEIGHT, DEFAULT_MENU_WIDTH, MIN_COMPOSITE_SIZE, MIN_MENU_HEIGHT, MIN_MENU_WIDTH, type Asset, type AssetType, type ButtonAsset, type ButtonComponent, type ButtonSlices, type SliceFill, type ChoiceOption, type ColliderComponent, type CollectionAsset, type CollectionEntry, type CollectionField, type ComponentBase, type CompositeAsset, type CompositeComponent, type DropdownComponent, type ImageAsset, type ImageComponent, type LabelComponent, type MenuAsset, type MenuComponent, type MeterComponent, type PanelAsset, type PanelComponent, type ProjectMeta, type SceneAsset, type SceneViewerComponent, type ScriptAsset, type TileCell, type TileComponent, type TilemapComponent, type TileSpan, type TilesetAsset, type SliderComponent, type TextAreaComponent, type TextComponent, type ToggleComponent, type ToggleGroupComponent } from './types'
+import { FORMAT_VERSION, DEFAULT_MENU_HEIGHT, DEFAULT_MENU_WIDTH, MIN_COMPOSITE_SIZE, MIN_MENU_HEIGHT, MIN_MENU_WIDTH, type Asset, type AssetType, type ButtonAsset, type ButtonComponent, type ButtonSlices, type SliceFill, type ChoiceOption, type ColliderComponent, type ZFieldComponent, type CollectionAsset, type CollectionEntry, type CollectionField, type ComponentBase, type CompositeAsset, type CompositeComponent, type DropdownComponent, type ImageAsset, type ImageComponent, type LabelAlignX, type LabelAlignY, type LabelComponent, type MenuAsset, type MenuComponent, type MeterComponent, type PanelAsset, type PanelComponent, type ProjectMeta, type SceneAsset, type SceneViewerComponent, type ScriptAsset, type TileCell, type TileComponent, type TilemapComponent, type TileSpan, type TilesetAsset, type SliderComponent, type TextAreaComponent, type TextComponent, type ToggleComponent, type ToggleGroupComponent } from './types'
 import { DEFAULT_TEXT_RATE, type BookAsset, type BookChapter, type BookPage, type PageBlock, type PageField, type PageMarks, type PageParagraph, type PageRun, type PageViewerComponent } from './types'
+import { canvasComponents } from './zField'
 
 export function defaultSlices(): ButtonSlices {
   return { left: 8, right: 8, top: 8, bottom: 8 }
@@ -93,7 +94,8 @@ export function createSceneAsset(id: string, name: string, relativePath: string)
     snapToGrid: false,
     scriptId: null,
     script: 'function onLoad()\nend\n\nfunction onUpdate(dt)\nend\n',
-    components: []
+    components: [],
+    persistent: false
   }
 }
 
@@ -242,7 +244,8 @@ const COMPONENT_NAMES: Record<MenuComponent['type'], string> = {
   sceneViewer: 'Scene viewer',
   tile: 'Tile',
   tilemap: 'Tilemap',
-  collider: 'Collider'
+  collider: 'Collider',
+  zField: 'Z field'
 }
 
 function textStyle(value: Record<string, unknown>): { fontFamily: string; fontSize: number; color: string } {
@@ -299,7 +302,9 @@ function parseComponent(value: unknown): MenuComponent | null {
     }
   }
   if (type === 'panel') return { ...base, type, panelId }
-  if (type === 'label') return { ...base, type, text: str(value.text), ...textStyle(value), panelId }
+  if (type === 'label') {
+    return { ...base, type, text: str(value.text), ...textStyle(value), alignX: labelAlignX(value.alignX), alignY: labelAlignY(value.alignY), panelId }
+  }
   if (type === 'meter') {
     return {
       ...base,
@@ -397,6 +402,18 @@ function parseComponent(value: unknown): MenuComponent | null {
       }),
       enabled: value.enabled !== false
     }
+  }
+  if (type === 'zField') {
+    const children = Array.isArray(value.children)
+      ? value.children.flatMap((child) => {
+          const parsed = parseComponent(child)
+          if (!parsed || parsed.type === 'zField') return []
+          const record = isRecord(child) ? child : {}
+          parsed.z = typeof record.z === 'number' && Number.isFinite(record.z) ? record.z : 0
+          return [parsed]
+        })
+      : []
+    return { ...base, type, x: 0, y: 0, width: 0, height: 0, children }
   }
   return { ...base, type, options: parseOptions(value.options), value: str(value.value), ...textStyle(value), panelId }
 }
@@ -701,7 +718,8 @@ function parseCanvasAsset(
   if (type === 'composite') {
     return { ...canvas, type, originX: num(value.originX, 0), originY: num(value.originY, 0) }
   }
-  return { ...canvas, type }
+  if (type === 'scene') return { ...canvas, type, persistent: value.persistent === true }
+  return { ...canvas, type: 'menu' }
 }
 
 export function parseMeta(value: unknown, fallbackName: string): ProjectMeta {
@@ -848,6 +866,7 @@ export function createMenuComponent(type: MenuComponent['type'], components: Men
   if (type === 'tile') return createTileComponent(components)
   if (type === 'tilemap') return createTilemapComponent(components)
   if (type === 'collider') return createColliderComponent(components)
+  if (type === 'zField') return createZFieldComponent(components)
   return createDropdownComponent(components)
 }
 
@@ -868,6 +887,10 @@ export function createTilemapComponent(components: MenuComponent[]): TilemapComp
 
 export function createColliderComponent(components: MenuComponent[]): ColliderComponent {
   return { ...componentBase(components, 'Collider', { x: 8, y: 8, width: 32, height: 32 }), type: 'collider', shape: 'square', tags: [], enabled: true }
+}
+
+export function createZFieldComponent(components: MenuComponent[]): ZFieldComponent {
+  return { ...componentBase(components, 'Z field', { x: 0, y: 0, width: 0, height: 0 }), type: 'zField', children: [] }
 }
 
 export function createCompositeComponent(components: MenuComponent[]): CompositeComponent {
@@ -896,7 +919,22 @@ export function createPanelComponent(components: MenuComponent[]): PanelComponen
 }
 
 export function createLabelComponent(components: MenuComponent[]): LabelComponent {
-  return styled({ ...componentBase(components, 'Label', { x: 8, y: 8, width: 40, height: 10 }), type: 'label', text: 'Label', panelId: null })
+  return styled({
+    ...componentBase(components, 'Label', { x: 8, y: 8, width: 40, height: 10 }),
+    type: 'label',
+    text: 'Label',
+    alignX: 'middle',
+    alignY: 'center',
+    panelId: null
+  })
+}
+
+function labelAlignX(value: unknown): LabelAlignX {
+  return value === 'left' || value === 'right' ? value : 'middle'
+}
+
+function labelAlignY(value: unknown): LabelAlignY {
+  return value === 'top' || value === 'bottom' ? value : 'center'
 }
 
 export function createMeterComponent(components: MenuComponent[]): MeterComponent {
@@ -996,19 +1034,37 @@ export function duplicateMenuComponent(
   source: MenuComponent,
   siblings: MenuComponent[],
   menuWidth = DEFAULT_MENU_WIDTH,
-  menuHeight = DEFAULT_MENU_HEIGHT
+  menuHeight = DEFAULT_MENU_HEIGHT,
+  handlePool?: readonly MenuComponent[]
 ): MenuComponent {
   const copy = JSON.parse(JSON.stringify(source)) as MenuComponent
+  const handles = canvasComponents(handlePool ?? siblings).map((item) => item.handle)
   copy.id = createId()
   copy.name = uniqueName(
     siblings.map((item) => item.name),
     `${source.name} copy`
   )
-  copy.handle = copy.handle ? uniqueScriptHandle(copy.handle, siblings.map((item) => item.handle)) : ''
+  copy.handle = copy.handle ? uniqueScriptHandle(copy.handle, handles) : ''
+  if (copy.handle) handles.push(copy.handle)
   copy.x = source.x + 16
   copy.y = source.y + 16
   copy.width = source.width
   copy.height = source.height
+  if (copy.type === 'zField') {
+    copy.x = 0
+    copy.y = 0
+    copy.width = 0
+    copy.height = 0
+    copy.children = copy.children.flatMap((child) => {
+      if (child.type === 'zField') return []
+      const next = { ...child, id: createId() }
+      if (next.handle) {
+        next.handle = uniqueScriptHandle(next.handle, handles)
+        handles.push(next.handle)
+      }
+      return [next]
+    })
+  }
   return copy
 }
 
@@ -1213,6 +1269,13 @@ function remapComponent(component: MenuComponent, idMap: Map<string, string>): M
     }
   }
   if (component.type === 'collider') return { ...component, scriptId }
+  if (component.type === 'zField') {
+    return {
+      ...component,
+      scriptId,
+      children: component.children.flatMap((child) => (child.type === 'zField' ? [] : [remapComponent(child, idMap)]))
+    }
+  }
   return { ...component, scriptId, panelId: remapId(component.panelId, idMap) }
 }
 

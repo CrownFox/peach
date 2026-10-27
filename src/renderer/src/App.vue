@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import type { RecentProject } from '@shared/recent'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { sameProjectPath, type RecentProject } from '@shared/recent'
 import { usePlayStore } from '@/stores/play'
 import { useProjectStore } from '@/stores/project'
 import { useSessionStore } from '@/stores/session'
@@ -24,6 +24,8 @@ const session = useSessionStore()
 const play = usePlayStore()
 const creating = ref(false)
 const tabStrip = ref<HTMLElement | null>(null)
+const recentAnchor = ref<HTMLElement | null>(null)
+const recentOpen = ref(false)
 const projectName = ref('Untitled Game')
 const recents = ref<RecentProject[]>([])
 
@@ -58,8 +60,26 @@ const openBooks = computed(() =>
   })
 )
 
+function onRecentPointer(event: PointerEvent): void {
+  if (!recentOpen.value) return
+  const target = event.target
+  if (target instanceof Node && recentAnchor.value?.contains(target)) return
+  recentOpen.value = false
+}
+
+function onRecentKey(event: KeyboardEvent): void {
+  if (event.key === 'Escape') recentOpen.value = false
+}
+
 onMounted(async () => {
+  window.addEventListener('pointerdown', onRecentPointer)
+  window.addEventListener('keydown', onRecentKey)
   recents.value = await window.peach.listRecentProjects()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('pointerdown', onRecentPointer)
+  window.removeEventListener('keydown', onRecentKey)
 })
 
 async function openProject(): Promise<void> {
@@ -68,8 +88,28 @@ async function openProject(): Promise<void> {
 }
 
 async function openRecent(dir: string): Promise<void> {
-  await project.openProject(dir)
-  if (!project.isOpen) recents.value = await window.peach.forgetRecentProject(dir)
+  const result = await project.openProject(dir)
+  if (result === 'failed') recents.value = await window.peach.forgetRecentProject(dir)
+  else if (result === 'opened') recents.value = await window.peach.listRecentProjects()
+}
+
+async function toggleRecent(): Promise<void> {
+  if (recentOpen.value) {
+    recentOpen.value = false
+    return
+  }
+  recents.value = await window.peach.listRecentProjects()
+  recentOpen.value = true
+}
+
+function currentRecent(path: string): boolean {
+  return project.projectDir !== null && sameProjectPath(project.projectDir, path)
+}
+
+async function pickRecent(dir: string): Promise<void> {
+  recentOpen.value = false
+  if (currentRecent(dir)) return
+  await openRecent(dir)
 }
 
 async function forgetRecent(dir: string): Promise<void> {
@@ -79,8 +119,9 @@ async function forgetRecent(dir: string): Promise<void> {
 async function confirmCreate(): Promise<void> {
   const parent = await window.peach.chooseDirectory()
   if (!parent) return
+  const before = project.projectDir
   await project.createProject(parent, projectName.value)
-  if (project.isOpen) creating.value = false
+  if (project.projectDir && project.projectDir !== before) creating.value = false
 }
 
 const activeScript = computed(() => (project.workspace.activeTab.startsWith('script:') ? project.workspace.activeTab.slice(7) : ''))
@@ -152,6 +193,19 @@ function scriptTitle(key: string): string {
       <div class="top-actions">
         <button class="btn quiet" type="button" :disabled="project.busy" @click="creating = true">New</button>
         <button class="btn quiet" type="button" :disabled="project.busy" @click="openProject">Open</button>
+        <div ref="recentAnchor" class="recent-anchor">
+          <button class="btn quiet" type="button" :disabled="project.busy" :aria-expanded="recentOpen" @click="toggleRecent">Recent</button>
+          <div v-if="recentOpen" class="recent-menu">
+            <p v-if="recents.length === 0" class="recent-empty">No recent projects</p>
+            <div v-for="item in recents" :key="item.path" class="recent-row">
+              <button class="recent-open" type="button" :class="{ current: currentRecent(item.path) }" :title="item.path" @click="pickRecent(item.path)">
+                <span class="recent-name">{{ item.name }}<span v-if="currentRecent(item.path)" class="recent-current">Current</span></span>
+                <span class="recent-path">{{ item.path }}</span>
+              </button>
+              <button class="recent-forget" type="button" title="Remove from recent projects" @click="forgetRecent(item.path)">×</button>
+            </div>
+          </div>
+        </div>
         <button class="btn" type="button" :disabled="!project.isOpen || project.busy" @click="project.exportGame()">Export</button>
       </div>
       <div class="spacer"></div>
@@ -258,41 +312,42 @@ function scriptTitle(key: string): string {
           </button>
         </div>
         <div class="tab-body">
-          <GameView v-show="project.workspace.activeTab === 'game'" />
-          <EditorCanvas v-show="project.workspace.activeTab === 'editor'" />
+          <GameView :key="project.projectDir ?? ''" v-show="project.workspace.activeTab === 'game'" />
+          <EditorCanvas :key="project.projectDir ?? ''" v-show="project.workspace.activeTab === 'editor'" />
           <MenuEditor
             v-for="menu in openMenus"
             v-show="project.workspace.activeTab === `menu:${menu.id}`"
-            :key="menu.id"
+            :key="`${project.projectDir}:${menu.id}`"
             :menu-id="menu.id"
           />
           <MenuEditor
             v-for="item in openComposites"
             v-show="project.workspace.activeTab === `composite:${item.id}`"
-            :key="item.id"
+            :key="`${project.projectDir}:${item.id}`"
             :menu-id="item.id"
           />
           <MenuEditor
             v-for="item in openScenes"
             v-show="project.workspace.activeTab === `scene:${item.id}`"
-            :key="item.id"
+            :key="`${project.projectDir}:${item.id}`"
             :menu-id="item.id"
           />
           <CollectionEditor
             v-for="item in openCollections"
             v-show="project.workspace.activeTab === `collection:${item.id}`"
-            :key="item.id"
+            :key="`${project.projectDir}:${item.id}`"
             :collection-id="item.id"
           />
           <BookEditor
             v-for="item in openBooks"
             v-show="project.workspace.activeTab === `book:${item.id}`"
-            :key="item.id"
+            :key="`${project.projectDir}:${item.id}`"
             :book-id="item.id"
           />
           <ScriptEditor
             v-if="project.workspace.openScriptTabs.length > 0"
             v-show="activeScript"
+            :key="project.projectDir ?? ''"
             :tab="activeScript || project.workspace.openScriptTabs[0] || ''"
           />
         </div>

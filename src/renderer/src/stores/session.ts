@@ -5,6 +5,7 @@ export const useSessionStore = defineStore('session', {
     selectedTreePath: '',
     selectedComponentId: null as string | null,
     tilemapEdit: null as string | null,
+    zFieldEdit: null as string | null,
     renamingPath: null as string | null,
     focusNameAssetId: null as string | null,
     banner: null as string | null,

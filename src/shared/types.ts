@@ -79,6 +79,7 @@ export type ComponentBase = {
   properties?: Record<string, string | boolean | number>
   tint: string
   visible: boolean
+  z?: number
 }
 
 export type ImageFit = 'stretch' | 'tile'
@@ -104,12 +105,17 @@ export type PanelComponent = ComponentBase & {
   panelId: string | null
 }
 
+export type LabelAlignX = 'left' | 'middle' | 'right'
+export type LabelAlignY = 'top' | 'center' | 'bottom'
+
 export type LabelComponent = ComponentBase & {
   type: 'label'
   text: string
   fontFamily: string
   fontSize: number
   color: string
+  alignX: LabelAlignX
+  alignY: LabelAlignY
   panelId: string | null
 }
 
@@ -261,6 +267,11 @@ export type ColliderComponent = ComponentBase & {
   enabled: boolean
 }
 
+export type ZFieldComponent = ComponentBase & {
+  type: 'zField'
+  children: MenuComponent[]
+}
+
 export type MenuComponent =
   | ImageComponent
   | ButtonComponent
@@ -279,6 +290,7 @@ export type MenuComponent =
   | TileComponent
   | TilemapComponent
   | ColliderComponent
+  | ZFieldComponent
 
 export const DEFAULT_MENU_WIDTH = 880
 export const DEFAULT_MENU_HEIGHT = 495
@@ -328,6 +340,7 @@ export type SceneAsset = {
   scriptId: string | null
   script: string
   components: MenuComponent[]
+  persistent: boolean
 }
 
 export type TilesetAsset = {

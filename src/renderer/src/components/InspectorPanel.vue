@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { BUILTIN_FONTS } from '@shared/fonts'
 import { isScriptHandle } from '@shared/handles'
 import type { ComponentOverride } from '@shared/overrides'
 import { assetLocation } from '@shared/paths'
 import { compositeBlocked } from '@shared/composites'
 import { applyIntrinsicSize, intrinsicSize } from '@shared/intrinsicSize'
-import { fitTileSpan, mapSize, pruneCells, tilemapCellSize } from '@shared/tiles'
+import { fitTileSpan, imageForTileset, mapSize, mergeAt, pruneCells, tileGrid, tilemapCellSize, tilesetById } from '@shared/tiles'
 import { isCanvas, type ButtonComponent } from '@shared/types'
+import { enclosingField, findComponent, handleTaken, type LayerPlace } from '@shared/zField'
+import { fileUrl } from '@/thumbs'
 import { usePlayStore } from '@/stores/play'
 import { useProjectStore } from '@/stores/project'
 import { useSessionStore } from '@/stores/session'
@@ -15,6 +17,7 @@ import { GAME_PROPERTIES_WINDOW } from '@shared/workspace'
 import AssetSelect from './AssetSelect.vue'
 import ComponentFields from './ComponentFields.vue'
 import ScriptProperties from './ScriptProperties.vue'
+import TilePicker from './TilePicker.vue'
 
 const project = useProjectStore()
 const session = useSessionStore()
@@ -27,7 +30,8 @@ const menu = computed(() => {
   const asset = project.asset(tab.slice(prefix.length))
   return asset && isCanvas(asset) ? asset : null
 })
-const selected = computed(() => menu.value?.components.find((component) => component.id === session.selectedComponentId) ?? null)
+const selected = computed(() => (menu.value ? findComponent(menu.value.components, session.selectedComponentId ?? '') : null))
+const zChild = computed(() => (menu.value && selected.value ? enclosingField(menu.value.components, selected.value.id) !== null : false))
 const naturalSize = computed(() => (selected.value ? intrinsicSize(selected.value, project.assets) : null))
 const sizedComponent = computed(
   () =>
@@ -44,13 +48,83 @@ const blockedComposites = computed(() => {
     asset.type === 'composite' && compositeBlocked(project.assets, hostId, asset.id) ? [asset.id] : []
   )
 })
-const layers = computed(() => [...(menu.value?.components ?? [])].reverse())
+const layerRows = computed(() => {
+  const rows: { id: string; name: string; type: string; depth: number; fieldId: string | null }[] = []
+  const components = menu.value?.components ?? []
+  for (let index = components.length - 1; index >= 0; index -= 1) {
+    const component = components[index]
+    if (!component) continue
+    rows.push({ id: component.id, name: component.name, type: component.type, depth: 0, fieldId: null })
+    if (component.type !== 'zField') continue
+    for (let childIndex = component.children.length - 1; childIndex >= 0; childIndex -= 1) {
+      const child = component.children[childIndex]
+      if (!child || child.type === 'zField') continue
+      rows.push({ id: child.id, name: child.name, type: child.type, depth: 1, fieldId: component.id })
+    }
+  }
+  return rows
+})
+const pickingTile = ref(false)
+const layerDragId = ref<string | null>(null)
+const layerDrop = ref<{ id: string; place: LayerPlace } | null>(null)
+const editingFieldId = computed(() => {
+  if (!menu.value || !session.zFieldEdit?.startsWith(`${menu.value.id}/`)) return null
+  return session.zFieldEdit.slice(menu.value.id.length + 1)
+})
 const scriptKey = computed(() => (project.workspace.activeTab.startsWith('script:') ? project.workspace.activeTab.slice(7) : ''))
 const focused = computed(() => {
   if (project.workspace.activeTab !== 'editor') return null
   const id = project.focusedWindow?.assetId ?? null
   return project.asset(id)
 })
+
+function layerLocked(id: string): boolean {
+  const fieldId = editingFieldId.value
+  if (!fieldId || !menu.value) return false
+  if (id === fieldId) return false
+  const field = menu.value.components.find((component) => component.id === fieldId)
+  return !(field?.type === 'zField' && field.children.some((child) => child.id === id))
+}
+
+function selectLayer(id: string): void {
+  if (layerLocked(id)) return
+  session.selectedComponentId = id
+}
+
+function onLayerDragStart(id: string, event: DragEvent): void {
+  layerDragId.value = id
+  event.dataTransfer?.setData('text/plain', id)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+function onLayerDragOver(id: string, event: DragEvent): void {
+  const dragId = layerDragId.value
+  if (!dragId || dragId === id) return
+  const dragged = layerRows.value.find((row) => row.id === dragId)
+  const target = layerRows.value.find((row) => row.id === id)
+  if (!dragged || !target) return
+  if (dragged.type === 'zField' && target.fieldId) return
+  event.preventDefault()
+  const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const offset = event.clientY - bounds.top
+  const intoField = target.type === 'zField' && dragged.type !== 'zField' && offset > bounds.height * 0.25 && offset < bounds.height * 0.75
+  layerDrop.value = { id, place: intoField ? 'inside' : offset < bounds.height / 2 ? 'above' : 'below' }
+}
+
+function onLayerDrop(id: string, event: DragEvent): void {
+  event.preventDefault()
+  const dragId = layerDragId.value
+  const drop = layerDrop.value
+  layerDragId.value = null
+  layerDrop.value = null
+  if (!menu.value || !dragId || !drop || drop.id !== id) return
+  project.placeComponent(menu.value.id, dragId, id, drop.place)
+}
+
+function onLayerDragEnd(): void {
+  layerDragId.value = null
+  layerDrop.value = null
+}
 
 function menuName(id: string): string {
   const asset = project.asset(id)
@@ -218,7 +292,7 @@ function setHandle(event: Event): void {
     input.value = selected.value.handle
     return
   }
-  const taken = menu.value.components.some((component) => component.id !== selected.value?.id && component.handle === handle)
+  const taken = handleTaken(menu.value.components, handle, selected.value.id)
   if (handle && taken) {
     session.fail('That script id is already used on this menu.')
     input.value = selected.value.handle
@@ -264,15 +338,46 @@ function setTileTileset(id: string | null): void {
   forget('tileY')
 }
 
-function setTileIndex(key: 'tileX' | 'tileY', event: Event): void {
-  const value = numberValue(event)
-  if (!menu.value || selected.value?.type !== 'tile' || value === null) return
-  const index = Math.max(0, Math.floor(value))
+const tilePreview = computed(() => {
+  const component = selected.value
+  if (component?.type !== 'tile' || !component.tilesetId) return null
+  const sheet = tilesetById(project.assets, component.tilesetId)
+  const picture = sheet ? imageForTileset(sheet, project.assets) : null
+  if (!sheet || !picture?.file || sheet.tileWidth < 1 || sheet.tileHeight < 1) return null
+  const grid = tileGrid(sheet.tileWidth, sheet.tileHeight, picture.width, picture.height)
+  if (component.tileX < 0 || component.tileY < 0 || component.tileX >= grid.cols || component.tileY >= grid.rows) return null
+  const span = mergeAt(sheet.merges, component.tileX, component.tileY)
+  const scale = 48 / sheet.tileWidth
+  return {
+    style: {
+      width: '48px',
+      height: `${Math.min(96, sheet.tileHeight * scale)}px`,
+      backgroundImage: `url("${fileUrl(picture.file)}")`,
+      backgroundSize: `${picture.width * scale}px ${picture.height * scale}px`,
+      backgroundPosition: `${-component.tileX * 48}px ${-component.tileY * sheet.tileHeight * scale}px`
+    },
+    merged: span.width > 1 || span.height > 1
+  }
+})
+
+function confirmTile(tileX: number, tileY: number): void {
+  pickingTile.value = false
+  if (!menu.value || selected.value?.type !== 'tile') return
   project.patchComponent(menu.value.id, selected.value.id, (component) => {
-    if (component.type === 'tile') component[key] = index
+    if (component.type !== 'tile') return
+    component.tileX = tileX
+    component.tileY = tileY
   })
-  forget(key)
+  forget('tileX')
+  forget('tileY')
 }
+
+watch(
+  () => (selected.value?.type === 'tile' ? `${selected.value.id}:${selected.value.tilesetId ?? ''}` : ''),
+  () => {
+    pickingTile.value = false
+  }
+)
 
 function setTilemapCell(key: 'tileWidth' | 'tileHeight', event: Event): void {
   const value = numberValue(event)
@@ -302,7 +407,34 @@ const editingTilemap = computed(() => menu.value && selected.value ? session.til
 function editTilemap(): void {
   if (!menu.value || selected.value?.type !== 'tilemap') return
   const key = `${menu.value.id}/${selected.value.id}`
+  session.zFieldEdit = null
   session.tilemapEdit = session.tilemapEdit === key ? null : key
+}
+
+const editingZField = computed(() => (menu.value && selected.value ? session.zFieldEdit === `${menu.value.id}/${selected.value.id}` : false))
+
+function editZField(): void {
+  if (!menu.value || selected.value?.type !== 'zField') return
+  const key = `${menu.value.id}/${selected.value.id}`
+  session.tilemapEdit = null
+  session.zFieldEdit = session.zFieldEdit === key ? null : key
+}
+
+function setZ(event: Event): void {
+  const value = numberValue(event)
+  if (!menu.value || !selected.value || value === null) return
+  project.patchComponent(menu.value.id, selected.value.id, (component) => {
+    component.z = value
+  })
+  forget('z')
+}
+
+function setScenePersistent(event: Event): void {
+  if (menu.value?.type !== 'scene') return
+  const persistent = (event.target as HTMLInputElement).checked
+  project.patchAsset(menu.value.id, (asset) => {
+    if (asset.type === 'scene') asset.persistent = persistent
+  })
 }
 
 function setScene(id: string | null): void {
@@ -411,20 +543,40 @@ function patchButton(recipe: (component: ButtonComponent) => void): void {
     </template>
 
     <template v-else-if="menu">
+      <div v-if="menu.type === 'scene'">
+        <label class="check">
+          <input type="checkbox" :checked="menu.persistent" @change="setScenePersistent" />
+          <span>Persistent</span>
+        </label>
+        <p class="tree-hint">Keeps this scene's script values, and the changes scripts make to its components, when the menu changes. The next Scene Viewer shows that same state. Restarting the game starts it over.</p>
+      </div>
       <div>
         <div class="field-label">Components</div>
         <button
-          v-for="component in layers"
-          :key="component.id"
+          v-for="row in layerRows"
+          :key="row.id"
           class="layer"
-          :class="{ selected: component.id === selected?.id }"
+          :class="{
+            selected: row.id === selected?.id,
+            child: row.depth > 0,
+            'is-locked': layerLocked(row.id),
+            'drop-above': layerDrop?.id === row.id && layerDrop.place === 'above',
+            'drop-below': layerDrop?.id === row.id && layerDrop.place === 'below',
+            'drop-inside': layerDrop?.id === row.id && layerDrop.place === 'inside'
+          }"
           type="button"
-          @click="session.selectedComponentId = component.id"
+          draggable="true"
+          @click="selectLayer(row.id)"
+          @dragstart="onLayerDragStart(row.id, $event)"
+          @dragover="onLayerDragOver(row.id, $event)"
+          @drop="onLayerDrop(row.id, $event)"
+          @dragend="onLayerDragEnd"
         >
-          <span>{{ component.name || 'Untitled' }}</span>
-          <span>{{ component.type }}</span>
+          <span>{{ row.name || 'Untitled' }}</span>
+          <span>{{ row.type }}</span>
         </button>
-        <p v-if="layers.length === 0" class="tree-hint">Right-click the canvas to add a component.</p>
+        <p v-if="layerRows.length === 0" class="tree-hint">Right-click the canvas to add a component.</p>
+        <p v-else class="tree-hint">Drag a row to reorder it. Drop it on a Z field to move it inside.</p>
       </div>
       <template v-if="selected">
         <label class="field">
@@ -455,12 +607,20 @@ function patchButton(recipe: (component: ButtonComponent) => void): void {
         </template>
         <template v-if="selected.type === 'tile'">
           <AssetSelect label="Tileset" type="tileset" clearable :model-value="selected.tilesetId" @update:model-value="setTileTileset" />
-          <div class="grid-2">
-            <label class="field"><span class="field-label">Tile X</span><input type="number" min="0" step="1" :value="selected.tileX" @change="setTileIndex('tileX', $event)" /></label>
-            <label class="field"><span class="field-label">Tile Y</span><input type="number" min="0" step="1" :value="selected.tileY" @change="setTileIndex('tileY', $event)" /></label>
+          <div class="tile-choice">
+            <button class="tile-preview" type="button" :class="{ merged: tilePreview?.merged }" :style="tilePreview?.style" :disabled="!selected.tilesetId" @click="pickingTile = true"></button>
+            <button class="btn" type="button" :disabled="!selected.tilesetId" @click="pickingTile = true">Choose tile</button>
           </div>
+          <p class="tree-hint">Column {{ selected.tileX }}, row {{ selected.tileY }}. Choose tile opens the sheet. Click a cell, then use it. This box is one cell. A merged picture hangs off it, and resizing stretches that picture.</p>
           <button class="btn" type="button" :disabled="!selected.tilesetId" @click="openTileset(selected.tilesetId)">Open tileset</button>
-          <p class="tree-hint">This box is one cell. A merged tile hangs out of it, and resizing stretches that picture.</p>
+          <TilePicker
+            v-if="pickingTile && selected.tilesetId"
+            :tileset-id="selected.tilesetId"
+            :tile-x="selected.tileX"
+            :tile-y="selected.tileY"
+            @confirm="confirmTile"
+            @cancel="pickingTile = false"
+          />
         </template>
         <template v-else-if="selected.type === 'tilemap'">
           <div class="grid-2">
@@ -512,7 +672,15 @@ function patchButton(recipe: (component: ButtonComponent) => void): void {
             <button class="btn danger" type="button" :disabled="selected.script.trim().length === 0" @click="deleteComponentScript">Delete Script</button>
           </div>
         </template>
-        <div class="grid-2">
+        <template v-if="selected.type === 'zField'">
+          <button class="btn" type="button" @click="editZField">{{ editingZField ? 'Done' : 'Edit components' }}</button>
+          <p class="tree-hint">Edit components keeps selection on this field and the pieces inside it. Right-click the canvas to add one. Pieces before the field draw behind all of them, and pieces after draw in front. Inside the field, a higher Z draws in front.</p>
+        </template>
+        <label v-if="zChild" class="field">
+          <span class="field-label">Z</span>
+          <input type="number" :value="selected.z ?? 0" @change="setZ" />
+        </label>
+        <div v-if="selected.type !== 'zField'" class="grid-2">
           <label class="field"><span class="field-label">X</span><input type="number" :value="selected.x" @change="setRect('x', $event)" /></label>
           <label class="field"><span class="field-label">Y</span><input type="number" :value="selected.y" @change="setRect('y', $event)" /></label>
           <label class="field"><span class="field-label">Width</span><input type="number" :value="selected.width" @change="setRect('width', $event)" /></label>
@@ -581,7 +749,7 @@ function patchButton(recipe: (component: ButtonComponent) => void): void {
           </div>
         </template>
         <ComponentFields
-          v-if="selected.type !== 'image' && selected.type !== 'button' && selected.type !== 'composite' && selected.type !== 'sceneViewer'"
+          v-if="selected.type !== 'image' && selected.type !== 'button' && selected.type !== 'composite' && selected.type !== 'sceneViewer' && selected.type !== 'zField'"
           :menu-id="menu.id"
           :component="selected"
         />

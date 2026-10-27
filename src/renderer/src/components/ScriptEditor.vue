@@ -5,6 +5,7 @@ import { useProjectStore } from '@/stores/project'
 import { monacoApi, setScriptHints, type ScriptHints } from '@/script/monaco'
 import { componentProperties } from '@shared/scriptProperties'
 import { isCanvas, type CanvasAsset } from '@shared/types'
+import { canvasComponents } from '@shared/zField'
 
 const props = defineProps<{ tab: string }>()
 const project = useProjectStore()
@@ -14,7 +15,7 @@ let codeEditor: editor.IStandaloneCodeEditor | null = null
 let applying = false
 
 function componentHandles(canvas: CanvasAsset): ScriptHints['handles'] {
-  return canvas.components.flatMap((component) => (component.handle ? [{ name: component.handle, type: component.type }] : []))
+  return canvasComponents(canvas.components).flatMap((component) => (component.handle ? [{ name: component.handle, type: component.type }] : []))
 }
 
 function referencedScript(id: string | null): string {
