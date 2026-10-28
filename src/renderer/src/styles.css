@@ -169,6 +169,8 @@ input, textarea { user-select: text; }
 .option-row input { flex: 1; min-width: 0; }
 .entry-mark { margin-left: auto; color: var(--gold); font-size: 10px; letter-spacing: 0.04em; }
 .tree-hint { margin: 8px 12px; color: var(--faint); line-height: 1.4; }
+.script-api { margin-top: 8px; }
+.script-api-label { margin: 10px 12px 0; font-size: 12px; }
 .script-editor { position: absolute; inset: 0; user-select: text; }
 .console {
   margin: 0 12px 12px; padding: 8px; max-height: 180px; overflow: auto;
@@ -296,6 +298,9 @@ input, textarea { user-select: text; }
 .btn.selected { border-color: #fff; }
 .overlay { position: absolute; inset: 0; z-index: 1; }
 .marquee { position: absolute; border: 1px solid var(--accent); pointer-events: none; }
+.align-guide { position: absolute; background: var(--accent); pointer-events: none; z-index: 2; }
+.align-guide-x { top: 0; bottom: 0; width: 1px; }
+.align-guide-y { left: 0; right: 0; height: 1px; }
 .handle { position: absolute; width: 9px; height: 9px; background: #fffdf8; border: 1px solid var(--accent); pointer-events: auto; }
 .handle-nw { left: -5px; top: -5px; cursor: nwse-resize; }
 .handle-se { right: -5px; bottom: -5px; cursor: nwse-resize; }

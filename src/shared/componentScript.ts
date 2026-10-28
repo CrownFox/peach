@@ -1,6 +1,6 @@
 import type { MenuComponent } from './types'
 
-const colorNote = '-- self.x        horizontal position, in the same pixels as the editor\n-- self.y        vertical position, in the same pixels as the editor\n-- self.z        draw order inside a Z field. Higher draws in front. Equal values keep the order in the field.\n-- self.visible  true or false. False hides this component.\n-- self.color    a color such as "#ff8800". White "#ffffff" leaves this unchanged.\n'
+const colorNote = '-- self.x        horizontal position, in the same pixels as the editor\n-- self.y        vertical position, in the same pixels as the editor\n-- self.width    width. A negative width flips left to right\n-- self.height   height. A negative height flips top to bottom\n-- self.z        draw order inside a Z field. Higher draws in front\n-- self.visible  true or false. False hides this component\n-- self.enabled  true or false. False means the player cannot use this\n-- self.color    a color such as "#ff8800". White "#ffffff" leaves this unchanged\n-- self.type     the component type. It cannot be changed\n-- self.name     the name from the editor. It cannot be changed\n-- onMouseDown, onMouseUp, onMouseEnter, and onMouseLeave follow the pointer.\n-- game.getMousePosition() returns x and y on the open menu.\n'
 
 const buttonScript = `${colorNote}-- Called when this button is clicked.
 -- self.text           the label
@@ -65,10 +65,10 @@ export function componentScriptTemplate(type: MenuComponent['type']): string {
     return `${colorNote}-- local hits = self:collisionWith({"solid", "hurt"})\n-- hits[1].collider   the other collider\n-- hits[1].x   its position on this menu or scene\n-- hits[1].y\n-- self.tags   the names on this collider\n-- self.shape   "square" or "circle"\n-- self.enabled   true or false. False skips this collider\n`
   }
   if (type === 'zField') {
-    return '-- This layer has no position of its own. Components inside it use this canvas\'s pixels.\n-- Their z sets draw order. Higher draws in front. Equal z keeps the order in this field.\n-- self.visible  hides every component in the field.\n-- self.color    tints those components.\n'
+    return '-- This layer has no position or size of its own. Components inside it use this canvas\'s pixels.\n-- Their z sets draw order. Higher draws in front. Equal z keeps the order in this field.\n-- self.visible  hides every component in the field.\n-- self.enabled  true or false. False skips clicks and colliders inside the field.\n-- self.color    tints those components.\n-- self.type     "zField". It cannot be changed.\n-- self.name     the name from the editor. It cannot be changed.\n'
   }
   if (type === 'sceneViewer') {
-    return `${colorNote}-- self.viewX   left edge of the view, in scene pixels\n-- self.viewY   top edge of the view, in scene pixels\n-- self.scale   a whole number. 2 draws each scene pixel as 2 by 2\n-- self.width   scene pixels visible across the view\n-- self.height  scene pixels visible down the view\n-- self.scene   a scene path\n`
+    return `${colorNote}-- self.viewX       left edge of the view, in scene pixels\n-- self.viewY       top edge of the view, in scene pixels\n-- self.viewWidth   scene pixels visible across the view\n-- self.viewHeight  scene pixels visible down the view\n-- self.scale       a whole number. 2 draws each scene pixel as 2 by 2\n-- self.scene       a scene path\n`
   }
   return onChangeScript('-- onChange runs when the player picks an option.\n-- self.value   the selected option id\n-- self.panel   a panel path, such as "ui/Frame"')
 }

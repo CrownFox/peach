@@ -1,5 +1,6 @@
 import { compositeById, fittedContent, instanceId, normalizeBox, shiftOrigin, type Box } from './composites'
 import type { SceneOverrides } from './overrides'
+import { componentSpan, readEnabled } from './runtime'
 import type { Asset, ColliderComponent, MenuComponent } from './types'
 
 export type WorldCollider = {
@@ -92,24 +93,24 @@ function walk(
   for (const component of components) {
     const id = instanceId(parent, component.id)
     const placed = overrides[id]
-    const x = typeof placed?.x === 'number' ? placed.x : component.x
-    const y = typeof placed?.y === 'number' ? placed.y : component.y
+    const span = componentSpan(component, placed)
     const signed = {
-      x: content.x + x * scaleX,
-      y: content.y + y * scaleY,
-      width: component.width * scaleX,
-      height: component.height * scaleY
+      x: content.x + span.x * scaleX,
+      y: content.y + span.y * scaleY,
+      width: span.width * scaleX,
+      height: span.height * scaleY
     }
-    const drawFlipX = flipX !== component.width < 0
-    const drawFlipY = flipY !== component.height < 0
+    const drawFlipX = flipX !== span.width < 0
+    const drawFlipY = flipY !== span.height < 0
     if (component.type === 'zField') {
-      walk(component.children, canvasWidth, canvasHeight, content, parent, stack, ancestorEnabled, flipX, flipY, assets, overrides, found)
+      const fieldEnabled = ancestorEnabled && readEnabled(component, placed)
+      walk(component.children, canvasWidth, canvasHeight, content, parent, stack, fieldEnabled, flipX, flipY, assets, overrides, found)
       continue
     }
     if (component.type === 'sceneViewer') continue
     if (component.type === 'composite') {
       const composite = compositeById(assets, component.compositeId)
-      const enabled = ancestorEnabled && (placed?.enabled ?? component.enabled)
+      const enabled = ancestorEnabled && readEnabled(component, placed)
       if (!composite || !enabled || stack.includes(composite.id)) continue
       const placedSlot = reflectBox(
         shiftOrigin(signed, composite.originX, composite.originY, composite.width, composite.height),
@@ -134,7 +135,7 @@ function walk(
       continue
     }
     if (component.type !== 'collider') continue
-    const enabled = ancestorEnabled && (placed?.enabled ?? component.enabled)
+    const enabled = ancestorEnabled && readEnabled(component, placed)
     if (!enabled) continue
     const box = reflectBox(normalizeBox(signed), content, flipX, flipY)
     if (!(box.width > 0) || !(box.height > 0)) continue

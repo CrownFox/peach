@@ -5,7 +5,7 @@ import { useProjectStore } from '@/stores/project'
 import { monacoApi, setScriptHints, type ScriptHints } from '@/script/monaco'
 import { componentProperties } from '@shared/scriptProperties'
 import { isCanvas, type CanvasAsset } from '@shared/types'
-import { canvasComponents } from '@shared/zField'
+import { canvasComponents, findComponent } from '@shared/zField'
 
 const props = defineProps<{ tab: string }>()
 const project = useProjectStore()
@@ -14,8 +14,41 @@ const models = new Map<string, editor.ITextModel>()
 let codeEditor: editor.IStandaloneCodeEditor | null = null
 let applying = false
 
-function componentHandles(canvas: CanvasAsset): ScriptHints['handles'] {
-  return canvasComponents(canvas.components).flatMap((component) => (component.handle ? [{ name: component.handle, type: component.type }] : []))
+function componentHandles(canvas: CanvasAsset, seen = new Set<string>()): ScriptHints['handles'] {
+  if (seen.has(canvas.id)) return []
+  const next = new Set(seen)
+  next.add(canvas.id)
+  return canvasComponents(canvas.components).flatMap((component) => {
+    if (!component.handle) return []
+    const handle: ScriptHints['handles'][number] = { name: component.handle, type: component.type }
+    if (component.type === 'composite' && component.compositeId) {
+      const asset = project.asset(component.compositeId)
+      if (asset?.type === 'composite') handle.children = componentHandles(asset, next)
+    }
+    if (component.type === 'sceneViewer' && component.sceneId) {
+      const asset = project.asset(component.sceneId)
+      if (asset?.type === 'scene') handle.children = componentHandles(asset, next)
+    }
+    return [handle]
+  })
+}
+
+function scriptHosts(scriptId: string): NonNullable<ScriptHints['hosts']> {
+  const hosts: NonNullable<ScriptHints['hosts']> = []
+  const seen = new Set<string>()
+  const add = (host: NonNullable<ScriptHints['hosts']>[number]): void => {
+    if (seen.has(host)) return
+    seen.add(host)
+    hosts.push(host)
+  }
+  for (const asset of project.assets) {
+    if ((asset.type === 'menu' || asset.type === 'scene' || asset.type === 'composite') && asset.scriptId === scriptId) add(asset.type)
+    if (!isCanvas(asset)) continue
+    for (const component of canvasComponents(asset.components)) {
+      if (component.scriptId === scriptId) add(component.type)
+    }
+  }
+  return hosts
 }
 
 function referencedScript(id: string | null): string {
@@ -47,13 +80,15 @@ function hintsFor(tab: string): ScriptHints {
     const [, menuId, componentId] = tab.split(':')
     const menu = project.asset(menuId ?? null)
     const canvas = menu && isCanvas(menu) ? menu : null
-    const component = canvas?.components.find((item) => item.id === componentId) ?? null
+    const component = canvas ? findComponent(canvas.components, componentId ?? '') : null
     const handles = canvas ? componentHandles(canvas) : []
     const outerProperties = canvas?.type === 'composite' ? componentProperties(referencedScript(canvas.scriptId), canvas.script) : []
+    const scene = component?.type === 'sceneViewer' && component.sceneId ? project.asset(component.sceneId) : null
     if (component) {
       return {
         handles,
         self: component.type,
+        children: scene?.type === 'scene' ? componentHandles(scene) : [],
         suggestProperties: true,
         propertySources: [referencedScript(component.scriptId)],
         outerProperties
@@ -71,7 +106,8 @@ function hintsFor(tab: string): ScriptHints {
       const used = asset.scriptId === id || asset.components.some((component) => component.scriptId === id)
       if (used) handles.push(...componentHandles(asset))
     }
-    return { handles, self: 'any', suggestProperties: true }
+    const hosts = scriptHosts(id)
+    return { handles, self: hosts.length === 1 ? hosts[0] : 'any', hosts: hosts.length > 1 ? hosts : undefined, suggestProperties: true }
   }
   return { handles: [], self: 'any' }
 }

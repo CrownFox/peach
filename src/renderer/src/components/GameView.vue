@@ -71,6 +71,21 @@ function onControl(id: string, value: ControlValue, inputKey?: string): void {
   else play.setControl(id, value)
 }
 
+function viewportPoint(event: PointerEvent): { x: number; y: number } | null {
+  const el = viewportEl.value
+  if (!el || project.workspace.activeTab !== 'game') return null
+  const bounds = el.getBoundingClientRect()
+  const point = { x: event.clientX - bounds.left, y: event.clientY - bounds.top }
+  const inside = point.x >= 0 && point.y >= 0 && point.x <= el.clientWidth && point.y <= el.clientHeight
+  return inside ? point : null
+}
+
+function trackPointer(event: PointerEvent): void {
+  const el = viewportEl.value
+  if (!el) return
+  play.setPointer(viewportPoint(event), { width: el.clientWidth, height: el.clientHeight })
+}
+
 function press(id: string): void {
   play.pressedId = id
   const release = (): void => {
@@ -111,12 +126,28 @@ onMounted(() => {
   if (viewportEl.value) observer.observe(viewportEl.value)
   window.addEventListener('keydown', onKey)
   window.addEventListener('keyup', onKey)
+  window.addEventListener('pointermove', trackPointer)
+  window.addEventListener('pointerdown', onPointerDown)
+  window.addEventListener('pointerup', onPointerUp)
   clock = requestAnimationFrame(onFrame)
 })
+function onPointerDown(event: PointerEvent): void {
+  if (event.button !== 0) return
+  trackPointer(event)
+  if (viewportPoint(event)) play.pointerDown()
+}
+function onPointerUp(event: PointerEvent): void {
+  if (event.button !== 0) return
+  trackPointer(event)
+  if (project.workspace.activeTab === 'game') play.pointerUp()
+}
 onBeforeUnmount(() => {
   observer?.disconnect()
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('keyup', onKey)
+  window.removeEventListener('pointermove', trackPointer)
+  window.removeEventListener('pointerdown', onPointerDown)
+  window.removeEventListener('pointerup', onPointerUp)
   cancelAnimationFrame(clock)
 })
 </script>

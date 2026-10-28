@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { minimumCanvasSize, rectPercent } from '@shared/assets'
 import { centerContent } from '@shared/canvasView'
 import { storedFromVisual, visualRect } from '@shared/composites'
+import { alignMove, alignResize } from '@shared/align'
+import type { Rect } from '@shared/resize'
 import { resizeRect, snapTilemapSize, snapToGrid } from '@shared/resize'
 import { eraseCells, fillPicked, fillRegion, fitTileSpan, imageForTileset, lineCells, mapSize, mergeAt, paintAssigned, paintCells, placedTile, pruneCells, rectangleTiles, stampCells, tileGrid, tilemapCellSize, tileRoll, tilesetById } from '@shared/tiles'
 import { buildScene } from '@shared/scene'
@@ -77,6 +79,16 @@ const hoverCell = ref<{ x: number; y: number } | null>(null)
 const stroke = ref<{ x: number; y: number }[] | null>(null)
 const showBelow = ref(true)
 const showAbove = ref(true)
+const alignGuides = ref<{ x: number | null; y: number | null }>({ x: null, y: null })
+const alignGuideStyle = computed(() => {
+  const canvas = menu.value
+  const guide = alignGuides.value
+  if (!canvas || canvas.width <= 0 || canvas.height <= 0) return { x: '', y: '' }
+  return {
+    x: guide.x === null ? '' : `${(guide.x / canvas.width) * 100}%`,
+    y: guide.y === null ? '' : `${(guide.y / canvas.height) * 100}%`
+  }
+})
 const editing = computed(() => {
   const key = session.tilemapEdit
   if (!key || !menu.value || !key.startsWith(`${props.menuId}/`)) return null
@@ -194,6 +206,26 @@ const originStyle = computed(() => {
 
 function hitRect(component: MenuComponent): { x: number; y: number; width: number; height: number } {
   return visualRect(component, project.assets)
+}
+
+function alignTargets(id: string): Rect[] {
+  const canvas = menu.value
+  if (!canvas) return []
+  const boxes: Rect[] = []
+  for (const component of canvas.components) {
+    if (component.type === 'zField') {
+      if (!component.visible) continue
+      for (const child of component.children) {
+        if (child.id === id || child.type === 'zField' || !child.visible) continue
+        boxes.push(visualRect(child, project.assets))
+      }
+      continue
+    }
+    if (component.id === id || !component.visible) continue
+    boxes.push(visualRect(component, project.assets))
+  }
+  boxes.push({ x: 0, y: 0, width: canvas.width, height: canvas.height })
+  return boxes
 }
 
 watch(
@@ -478,15 +510,34 @@ function onPointerDown(event: PointerEvent): void {
     menuW,
     menuH
   }
+  const keepAlt = (ev: KeyboardEvent): void => {
+    if (ev.key === 'Alt') ev.preventDefault()
+  }
+  window.addEventListener('keydown', keepAlt)
+  window.addEventListener('keyup', keepAlt)
   const move = (ev: PointerEvent): void => {
     const dx = ((ev.clientX - drag.startX) / drag.frameW) * drag.menuW
     const dy = ((ev.clientY - drag.startY) / drag.frameH) * drag.menuH
     const edge = drag.handle ?? ''
-    let next = resizeRect(drag.rect, dx, dy, edge, ev.shiftKey)
+    const aspect = !!edge && (ev.ctrlKey || ev.metaKey)
+    const fromCenter = !!edge && ev.altKey
+    let next = resizeRect(drag.rect, dx, dy, edge, aspect, fromCenter)
     const cell = component.type === 'tilemap' ? tilemapCellSize(component, project.assets) : null
     const grid = menu.value?.snapToGrid ? menu.value.gridSize : 0
-    if (cell && edge) next = snapTilemapSize(drag.rect, next, edge, cell.tileWidth, cell.tileHeight, ev.shiftKey)
-    else if (grid > 0) next = snapToGrid(drag.rect, next, edge, grid, grid, ev.shiftKey)
+    const bounds = frameEl.value?.getBoundingClientRect()
+    const thresholdX = bounds && bounds.width > 0 ? (8 * drag.menuW) / bounds.width : 0
+    const thresholdY = bounds && bounds.height > 0 ? (8 * drag.menuH) / bounds.height : 0
+    if (ev.shiftKey) {
+      const aligned = edge
+        ? alignResize(drag.rect, next, edge, alignTargets(drag.id), thresholdX, thresholdY, aspect, fromCenter)
+        : alignMove(next, alignTargets(drag.id), thresholdX, thresholdY)
+      next = aligned.box
+      alignGuides.value = aligned.guide
+    } else {
+      alignGuides.value = { x: null, y: null }
+      if (cell && edge) next = snapTilemapSize(drag.rect, next, edge, cell.tileWidth, cell.tileHeight, aspect, fromCenter)
+      else if (grid > 0) next = snapToGrid(drag.rect, next, edge, grid, grid, aspect, fromCenter)
+    }
     if (!edge) {
       project.patchComponent(props.menuId, drag.id, (item) => {
         item.x = drag.storedX + next.x - drag.rect.x
@@ -494,7 +545,14 @@ function onPointerDown(event: PointerEvent): void {
       })
       return
     }
-    const rect = cell ? fitTileSpan(next, cell.tileWidth, cell.tileHeight) : next
+    const lockCells = !!cell && (!ev.shiftKey || aspect)
+    if (lockCells && ev.shiftKey && cell) next = snapTilemapSize(drag.rect, next, edge, cell.tileWidth, cell.tileHeight, aspect, fromCenter)
+    const rect = lockCells && cell ? fitTileSpan(next, cell.tileWidth, cell.tileHeight) : next
+    if (ev.shiftKey && lockCells) {
+      const onX = alignGuides.value.x === null || [rect.x, rect.x + rect.width / 2, rect.x + rect.width].some((value) => Math.abs(value - (alignGuides.value.x ?? 0)) <= thresholdX)
+      const onY = alignGuides.value.y === null || [rect.y, rect.y + rect.height / 2, rect.y + rect.height].some((value) => Math.abs(value - (alignGuides.value.y ?? 0)) <= thresholdY)
+      alignGuides.value = { x: onX ? alignGuides.value.x : null, y: onY ? alignGuides.value.y : null }
+    }
     const stored = storedFromVisual(component, rect, project.assets)
     project.patchComponent(props.menuId, drag.id, (item) => {
       item.x = stored.x
@@ -506,6 +564,9 @@ function onPointerDown(event: PointerEvent): void {
   const up = (): void => {
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', up)
+    window.removeEventListener('keydown', keepAlt)
+    window.removeEventListener('keyup', keepAlt)
+    alignGuides.value = { x: null, y: null }
     if (component.type !== 'tilemap') return
     const cell = tilemapCellSize(component, project.assets)
     project.patchComponent(props.menuId, component.id, (item) => {
@@ -587,21 +648,29 @@ function resizeFrame(event: PointerEvent): void {
   event.stopPropagation()
   const origin = { x: event.clientX, y: event.clientY, width: frame.value.width, height: frame.value.height }
   const scale = zoom.value || 1
+  const keepAlt = (ev: KeyboardEvent): void => {
+    if (ev.key === 'Alt') ev.preventDefault()
+  }
   const move = (ev: PointerEvent): void => {
     const dx = (ev.clientX - origin.x) / scale
     const dy = (ev.clientY - origin.y) / scale
-    let next = resizeRect({ x: 0, y: 0, width: origin.width, height: origin.height }, dx, dy, 'se', ev.shiftKey)
+    const aspect = ev.ctrlKey || ev.metaKey
+    let next = resizeRect({ x: 0, y: 0, width: origin.width, height: origin.height }, dx, dy, 'se', aspect, ev.altKey)
     const grid = menu.value?.snapToGrid ? menu.value.gridSize : 0
-    if (grid > 0) next = snapToGrid({ x: 0, y: 0, width: origin.width, height: origin.height }, next, 'se', grid, grid, ev.shiftKey)
+    if (grid > 0) next = snapToGrid({ x: 0, y: 0, width: origin.width, height: origin.height }, next, 'se', grid, grid, aspect, ev.altKey)
     frame.value = designSize(next.width, next.height)
   }
   const up = (): void => {
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', up)
+    window.removeEventListener('keydown', keepAlt)
+    window.removeEventListener('keyup', keepAlt)
     commitFrame()
   }
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', up)
+  window.addEventListener('keydown', keepAlt)
+  window.addEventListener('keyup', keepAlt)
 }
 
 function componentAt(event: MouseEvent): MenuComponent | null {
@@ -811,6 +880,8 @@ onBeforeUnmount(() => {
             <div v-if="menu?.type === 'composite'" class="origin-mark" :style="originStyle"></div>
             <div class="overlay" :class="{ 'is-painting': editing }">
               <div v-for="ghost in ghosts" :key="ghost.key" class="tile-ghost" :class="{ 'is-erase': ghost.erase }" :style="ghost.style"></div>
+              <div v-if="alignGuideStyle.x" class="align-guide align-guide-x" :style="{ left: alignGuideStyle.x }"></div>
+              <div v-if="alignGuideStyle.y" class="align-guide align-guide-y" :style="{ top: alignGuideStyle.y }"></div>
               <div v-if="selected && selected.type !== 'zField'" class="marquee" :style="marqueeStyle">
                 <i v-for="handle in handles" v-show="!editing" :key="handle" class="handle" :class="`handle-${handle}`" :data-handle="handle"></i>
               </div>

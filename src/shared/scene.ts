@@ -3,6 +3,7 @@ import { compositeById, fittedContent, instanceId, normalizeBox, shiftOrigin, ty
 import { componentColor, multiplyColor } from './color'
 import { DEFAULT_FONT_FAMILY } from './fonts'
 import { dropdownSelection, groupSelection, rangeNumbers, type ComponentOverride, type SceneOverrides } from './overrides'
+import { componentSpan, readEnabled } from './runtime'
 import { findAssetByLocation } from './refs'
 import { boxIntersects, clipInset, sceneById, sceneNodeId, viewerCamera, viewerScene } from './sceneCamera'
 import { imageForTileset, mapSize, pruneCells, tileDraws, tilemapCellSize, tilemapDraws, tileSheet, tilesetFor, type TileStamp } from './tiles'
@@ -275,7 +276,7 @@ function expand(
         content,
         parent,
         stack,
-        ancestorEnabled,
+        ancestorEnabled && readEnabled(component, fieldPlaced),
         fieldShown,
         fieldColor,
         rootWidth,
@@ -293,24 +294,23 @@ function expand(
     }
     const id = instanceId(parent, component.id)
     const placed = options?.overrides?.[id]
-    const x = typeof placed?.x === 'number' ? placed.x : component.x
-    const y = typeof placed?.y === 'number' ? placed.y : component.y
+    const span = componentSpan(component, placed)
     const signed = camera
       ? {
-          x: camera.view.x + (x - camera.viewX) * camera.menuPerScene,
-          y: camera.view.y + (y - camera.viewY) * camera.menuPerScene,
-          width: component.width * camera.menuPerScene,
-          height: component.height * camera.menuPerScene
+          x: camera.view.x + (span.x - camera.viewX) * camera.menuPerScene,
+          y: camera.view.y + (span.y - camera.viewY) * camera.menuPerScene,
+          width: span.width * camera.menuPerScene,
+          height: span.height * camera.menuPerScene
         }
       : {
-          x: content.x + x * scaleX,
-          y: content.y + y * scaleY,
-          width: component.width * scaleX,
-          height: component.height * scaleY
+          x: content.x + span.x * scaleX,
+          y: content.y + span.y * scaleY,
+          width: span.width * scaleX,
+          height: span.height * scaleY
         }
     const frame = camera ? camera.view : content
-    const ownFlipX = component.width < 0
-    const ownFlipY = component.height < 0
+    const ownFlipX = span.width < 0
+    const ownFlipY = span.height < 0
     const drawFlipX = flipX !== ownFlipX
     const drawFlipY = flipY !== ownFlipY
     const shown = ancestorVisible && (options?.overrides?.[id]?.visible ?? component.visible)
@@ -418,7 +418,7 @@ function expand(
     node.id = options?.presentId?.(id) ?? node.id
     node.color = multiplyColor(parentColor, componentColor(options?.overrides?.[id]?.tint ?? component.tint))
     node.visible = shown
-    if (!ancestorEnabled) node.enabled = false
+    if (!ancestorEnabled || !readEnabled(component, placed)) node.enabled = false
     placeNode(nodes, node, slot, clipView, drawFlipX, drawFlipY)
   }
 }
@@ -632,8 +632,9 @@ function emitTiles(
     node.enabled = false
     placeNode(nodes, node, slot, clipView, flipX, flipY)
   }
-  const spanWidth = Math.abs(component.width)
-  const spanHeight = Math.abs(component.height)
+  const span = componentSpan(component, placed)
+  const spanWidth = Math.abs(span.width)
+  const spanHeight = Math.abs(span.height)
   const placeSheet = (local: { width: number; height: number; draws: ReturnType<typeof tileDraws> }, imagePath: string | null): void => {
     const scaleX = local.width > 0 ? slot.width / local.width : 0
     const scaleY = local.height > 0 ? slot.height / local.height : 0

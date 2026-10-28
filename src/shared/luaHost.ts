@@ -22,6 +22,8 @@ import {
   type WorkingEntry
 } from './collections'
 import { canvasColliders, containingPoint, overlapping, type WorldCollider } from './collisions'
+import { menuPoint, surveyPointer, type MouseTarget, type Point } from './pointer'
+import { componentSharedKeys, componentSpan, readEnabled } from './runtime'
 import { compositeById, instanceEnabled, instanceVisible, resolvePiece, scenePieceAllows, visitPieces } from './composites'
 import { directPieces, findByHandle, handleTaken } from './zField'
 import { readComponentProperty, writeComponentProperty, type SceneOverrides, type ScriptValue } from './overrides'
@@ -117,6 +119,8 @@ export class LuaHost {
   private readonly presented = new Map<PlayFrame, Set<string>>()
   private typing = false
   private displayScale = 1
+  private pointer: Point | null = null
+  private viewport = { width: 0, height: 0 }
   private readonly reveals = new Map<PlayFrame, Map<string, TextReveal>>()
   private menuFrame: PlayFrame | null = null
   private modalFrame: PlayFrame | null = null
@@ -197,8 +201,13 @@ export class LuaHost {
     }
   }
 
+  usable(frame: PlayFrame, componentId: string): boolean {
+    return this.activationTarget(frame, componentId)?.allowed ?? false
+  }
+
   emitChange(frame: PlayFrame, componentId: string): void {
     if (this.changing.has(componentId)) return
+    if (!this.activationTarget(frame, componentId)?.allowed) return
     const menu = this.menu(frame.menuId)
     const component = menu ? resolvePiece(menu, this.hooks.assets(), componentId)?.component : null
     if (!menu || !component) return
@@ -436,6 +445,8 @@ export class LuaHost {
     lua.lua_setfield(this.state, -2, S('registerKey'))
     lua.lua_pushcfunction(this.state, (L: unknown) => this.keyDown(L))
     lua.lua_setfield(this.state, -2, S('keyDown'))
+    lua.lua_pushcfunction(this.state, (L: unknown) => this.gameMouse(L))
+    lua.lua_setfield(this.state, -2, S('getMousePosition'))
     for (const [name, method] of [
       ['saveSlot', this.saveSlot],
       ['loadSlot', this.loadSlot],
@@ -490,6 +501,22 @@ export class LuaHost {
 
   setDisplayScale(scale: number): void {
     this.displayScale = Number.isFinite(scale) && scale > 0 ? scale : 1
+  }
+
+  rememberPointer(point: Point | null, viewport: { width: number; height: number }): void {
+    this.pointer = point
+    this.viewport = viewport
+  }
+
+  dispatchMouse(frame: PlayFrame, targets: readonly MouseTarget[], name: 'onMouseDown' | 'onMouseUp' | 'onMouseEnter' | 'onMouseLeave'): void {
+    const compiled = this.compiled.get(frame)
+    if (!compiled) return
+    for (const target of targets) {
+      const env = this.mouseEnv(compiled, target)
+      if (env === undefined) continue
+      this.setSelf(env, this.mouseObject(frame, target))
+      this.callHook(env, name, `${target.name} ${name}`)
+    }
   }
 
   advanceUpdate(frame: PlayFrame, elapsedMs: number): void {
@@ -1544,7 +1571,8 @@ export class LuaHost {
       const y = this.wholeArg(L, 3, 'getTile')
       const override = object.frame.overrides[object.componentId]
       const grid = tilemapCellSize(component, this.hooks.assets())
-      const size = mapSize(component.width, component.height, grid.tileWidth, grid.tileHeight)
+      const span = componentSpan(component, override)
+      const size = mapSize(span.width, span.height, grid.tileWidth, grid.tileHeight)
       if (x < 0 || y < 0 || x >= size.cols || y >= size.rows) {
         lua.lua_pushnil(L)
         return 1
@@ -1582,7 +1610,8 @@ export class LuaHost {
       const override = object.frame.overrides[object.componentId]
       const { tileset, image } = this.requireTileset(path)
       const grid = tilemapCellSize(component, this.hooks.assets())
-      const size = mapSize(component.width, component.height, grid.tileWidth, grid.tileHeight)
+      const span = componentSpan(component, override)
+      const size = mapSize(span.width, span.height, grid.tileWidth, grid.tileHeight)
       if (x < 0 || y < 0 || x >= size.cols || y >= size.rows) throw new Error('That cell is outside the tilemap.')
       if (!indexInTileset(tileset, image, tileX, tileY)) throw new Error('That tile is outside the tileset.')
       const current = { ...(override ?? {}) }
@@ -1611,11 +1640,17 @@ export class LuaHost {
   private collisionAt(L: unknown): number {
     try {
       const object = this.objects.get(lua.lua_tointeger(L, lua.lua_upvalueindex(1)))
-      if (!object || (object.kind !== 'menu' && object.kind !== 'scene')) throw new Error('collisionAt is for a menu or a scene.')
+      if (!object || (object.kind !== 'menu' && object.kind !== 'scene' && object.kind !== 'composite')) {
+        throw new Error('collisionAt is for a menu, a scene, or a composite.')
+      }
       const x = this.numberArg(L, 2, 'x')
       const y = this.numberArg(L, 3, 'y')
       const tags = this.tagArg(L, 4, 'collisionAt')
-      const world = object.kind === 'menu' ? this.menuColliders(object.frame) : this.sceneColliders(object.frame, object.sceneId)
+      const world = object.kind === 'menu'
+        ? this.menuColliders(object.frame)
+        : object.kind === 'scene'
+          ? this.sceneColliders(object.frame, object.sceneId)
+          : this.compositeColliders(object.frame, object.instanceId)
       return this.pushHits(L, object.frame, containingPoint(world, x, y, tags))
     } catch (error) {
       return this.fail(L, error instanceof Error ? error.message : 'Could not check that point.')
@@ -1637,6 +1672,21 @@ export class LuaHost {
       assets: this.hooks.assets(),
       overrides: frame.overrides,
       prefix: ''
+    })
+  }
+
+  private compositeColliders(frame: PlayFrame, instanceId: string): WorldCollider[] {
+    const asset = this.compositeAsset(frame, instanceId)
+    const menu = this.menu(frame.menuId)
+    const piece = menu ? resolvePiece(menu, this.hooks.assets(), instanceId) : null
+    if (!asset || (piece && !readEnabled(piece.component, frame.overrides[instanceId]))) return []
+    return canvasColliders({
+      components: asset.components,
+      width: asset.width,
+      height: asset.height,
+      assets: this.hooks.assets(),
+      overrides: frame.overrides,
+      prefix: instanceId
     })
   }
 
@@ -2188,6 +2238,15 @@ export class LuaHost {
         return 1
       }
       if (key === 'collisionAt') return this.pushBound(L, (state) => this.collisionAt(state))
+      if (key === 'getMousePosition') return this.pushBound(L, (state) => this.canvasMouse(state))
+      const menuAsset = this.menu(object.frame.menuId)
+      if (menuAsset && (key === 'type' || key === 'name' || key === 'width' || key === 'height')) {
+        const value = key === 'type' ? 'menu' : key === 'name' ? menuAsset.name : key === 'width' ? menuAsset.width : menuAsset.height
+        this.pushValue(L, value)
+        return 1
+      }
+      const menuEnv = this.compiled.get(object.frame)?.menuRef
+      if (menuEnv !== undefined && this.pushRawField(menuEnv, key)) return 1
       lua.lua_pushnil(L)
       return 1
     }
@@ -2204,7 +2263,9 @@ export class LuaHost {
         lua.lua_pushnil(L)
         return 1
       }
-      if (key === 'enabled' || key === 'visible' || key === 'x' || key === 'y' || key === 'z' || key === 'color') {
+      if (key === 'collisionAt') return this.pushBound(L, (state) => this.collisionAt(state))
+      if (key === 'getMousePosition') return this.pushBound(L, (state) => this.canvasMouse(state))
+      if (componentSharedKeys.has(key)) {
         this.pushValue(L, readComponentProperty(piece.component, object.frame.overrides[object.instanceId], this.hooks.assets(), key))
         return 1
       }
@@ -2221,6 +2282,12 @@ export class LuaHost {
         return 1
       }
       if (key === 'collisionAt') return this.pushBound(L, (state) => this.collisionAt(state))
+      if (key === 'getMousePosition') return this.pushBound(L, (state) => this.canvasMouse(state))
+      if (scene && (key === 'type' || key === 'name' || key === 'width' || key === 'height')) {
+        const value = key === 'type' ? 'scene' : key === 'name' ? scene.name : key === 'width' ? scene.width : scene.height
+        this.pushValue(L, value)
+        return 1
+      }
       const env = this.compiled.get(object.frame)?.scenes.get(object.sceneId)?.envRef
       if (env !== undefined && this.pushRawField(env, key)) return 1
       lua.lua_pushnil(L)
@@ -2303,7 +2370,7 @@ export class LuaHost {
     if (object.kind === 'composite') {
       const asset = this.compositeAsset(object.frame, object.instanceId)
       if (key && asset && handleTaken(asset.components, key, '')) return this.fail(L, 'That value cannot be changed from a script.')
-      if (key === 'enabled' || key === 'visible' || key === 'x' || key === 'y' || key === 'z' || key === 'color') {
+      if (componentSharedKeys.has(key)) {
         try {
           const menu = this.menu(object.frame.menuId)
           if (!menu) throw new Error('That menu is no longer open.')
@@ -2322,8 +2389,17 @@ export class LuaHost {
       lua.lua_pop(this.state, 1)
       return 0
     }
+    if (object.kind === 'menu') {
+      if (key === 'type' || key === 'name' || key === 'width' || key === 'height' || key === 'collisionAt') {
+        return this.fail(L, `${key} cannot be changed.`)
+      }
+      return this.fail(L, 'That value cannot be changed from a script.')
+    }
     if (object.kind === 'scene') {
       const scene = sceneById(this.hooks.assets(), object.sceneId)
+      if (key === 'type' || key === 'name' || key === 'width' || key === 'height' || key === 'collisionAt') {
+        return this.fail(L, `${key} cannot be changed.`)
+      }
       if (key && scene && handleTaken(scene.components, key, '')) return this.fail(L, 'That value cannot be changed from a script.')
       const env = this.compiled.get(object.frame)?.scenes.get(object.sceneId)?.envRef
       if (env === undefined) return this.fail(L, 'That value cannot be changed from a script.')
@@ -2359,6 +2435,58 @@ export class LuaHost {
       return this.fail(L, error instanceof Error ? error.message : 'Could not update that value.')
     }
     return 0
+  }
+
+  private gameMouse(L: unknown): number {
+    const frame = this.modalFrame ?? this.menuFrame
+    return frame ? this.pushPoint(L, this.pointerIn(frame)) : this.pushPoint(L, null)
+  }
+
+  private canvasMouse(L: unknown): number {
+    const object = this.objects.get(lua.lua_tointeger(L, lua.lua_upvalueindex(1)))
+    if (!object || object.kind === 'component') return this.pushPoint(L, null)
+    const here = this.pointerIn(object.frame)
+    if (!here) return this.pushPoint(L, null)
+    if (object.kind === 'menu') return this.pushPoint(L, here)
+    const menu = this.menu(object.frame.menuId)
+    if (!menu) return this.pushPoint(L, null)
+    const survey = surveyPointer(menu, this.hooks.assets(), object.frame.overrides, here, this.displayScale)
+    if (object.kind === 'composite') return this.pushPoint(L, survey.compositePoint.get(object.instanceId) ?? null)
+    return this.pushPoint(L, survey.scenePoint.get(object.sceneId) ?? null)
+  }
+
+  private pointerIn(frame: PlayFrame): Point | null {
+    if (!this.pointer) return null
+    const menu = this.menu(frame.menuId)
+    if (!menu) return null
+    return menuPoint(this.pointer, this.viewport, menu.width, menu.height)
+  }
+
+  private pushPoint(L: unknown, point: Point | null): number {
+    if (!point) {
+      lua.lua_pushnil(L)
+      return 1
+    }
+    lua.lua_createtable(L, 0, 2)
+    lua.lua_pushnumber(L, point.x)
+    lua.lua_setfield(L, -2, S('x'))
+    lua.lua_pushnumber(L, point.y)
+    lua.lua_setfield(L, -2, S('y'))
+    return 1
+  }
+
+  private mouseEnv(compiled: CompiledMenu, target: MouseTarget): number | undefined {
+    if (target.kind === 'menu') return compiled.menuRef
+    if (target.kind === 'scene') return compiled.scenes.get(target.id)?.envRef
+    if (target.kind === 'composite') return compiled.composites.get(target.id)
+    return compiled.components.get(target.id)
+  }
+
+  private mouseObject(frame: PlayFrame, target: MouseTarget): RuntimeObject {
+    if (target.kind === 'menu') return { kind: 'menu', frame }
+    if (target.kind === 'scene') return { kind: 'scene', frame, sceneId: target.id }
+    if (target.kind === 'composite') return { kind: 'composite', frame, instanceId: target.id }
+    return { kind: 'component', frame, componentId: target.id }
   }
 
   private clickProxy(L: unknown): number {

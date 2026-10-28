@@ -5,7 +5,7 @@ import { resizeRect, snapTilemapSize, snapToGrid } from './resize'
 import { fillPicked, fillRegion, lineCells, mapSize, paintAssigned, placedTile, pruneCells, rectangleTiles, stampCells, tileAtPoint, tileRoll, tileSheet, tilemapCellSize } from './tiles'
 import { canvasColliders } from './collisions'
 import { placeInCanvas } from './zField'
-import { writeComponentProperty, type SceneOverrides } from './overrides'
+import { readComponentProperty, writeComponentProperty, type SceneOverrides } from './overrides'
 import { buildScene, devicePixelScale, fitFrame, fittedBorderWidths, nineSliceLayout, snapNineSlice } from './scene'
 import { assetLocation, sanitizeFileStem, uniqueName } from './paths'
 import { buildTree, expandFolderPath, planTreeMove, remapMovedPaths } from './tree'
@@ -920,11 +920,13 @@ describe('composites', () => {
     expect(parsed).toMatchObject({ originX: 12, originY: 8 })
   })
 
-  it('keeps the aspect ratio while a resize handle is dragged with shift', () => {
+  it('keeps the aspect ratio, and alt grows that box from its center', () => {
     const start = { x: 10, y: 20, width: 100, height: 50 }
     expect(resizeRect(start, 20, 0, 'e', true)).toEqual({ x: 10, y: 15, width: 120, height: 60 })
     expect(resizeRect(start, 20, 40, 'se', true)).toEqual({ x: 10, y: 20, width: 180, height: 90 })
     expect(resizeRect(start, 20, 0, 'e', false)).toEqual({ x: 10, y: 20, width: 120, height: 50 })
+    expect(resizeRect(start, 20, 0, 'e', false, true)).toEqual({ x: -10, y: 20, width: 140, height: 50 })
+    expect(resizeRect(start, 20, 0, 'e', true, true)).toEqual({ x: -10, y: 10, width: 140, height: 70 })
   })
 
   it('reads the original size of an image, a button, a panel, and a composite', () => {
@@ -1330,6 +1332,32 @@ describe('Z field', () => {
     expect(overrides.hero?.z).toBe(7)
     expect(() => writeComponentProperty(menu, 'back', overrides, 'z', 1, [])).toThrow(/Z field/)
     expect(() => writeComponentProperty(menu, 'layer', overrides, 'x', 4, [])).toThrow(/no position/)
+    expect(() => writeComponentProperty(menu, 'layer', overrides, 'width', 4, [])).toThrow(/no size/)
+  })
+
+  it('resizes a component through the shared fields and keeps a scene viewer crop separate', () => {
+    const picture = createMenuComponent('image', [])
+    picture.id = 'picture'
+    picture.width = 40
+    picture.height = 20
+    const menu = canvas([picture])
+    const overrides: SceneOverrides = {}
+    writeComponentProperty(menu, 'picture', overrides, 'width', 80, [])
+    writeComponentProperty(menu, 'picture', overrides, 'enabled', false, [])
+    expect(overrides.picture?.width).toBe(80)
+    expect(readComponentProperty(picture, overrides.picture, [], 'width')).toBe(80)
+    expect(readComponentProperty(picture, overrides.picture, [], 'enabled')).toBe(false)
+    expect(readComponentProperty(picture, overrides.picture, [], 'type')).toBe('image')
+    expect(() => writeComponentProperty(menu, 'picture', overrides, 'type', 'label', [])).toThrow(/cannot be changed/)
+    const viewer = createMenuComponent('sceneViewer', [])
+    if (viewer.type !== 'sceneViewer') throw new Error('viewer')
+    viewer.id = 'camera'
+    viewer.width = 200
+    viewer.height = 100
+    viewer.scale = 2
+    expect(readComponentProperty(viewer, undefined, [], 'width')).toBe(200)
+    expect(readComponentProperty(viewer, undefined, [], 'viewWidth')).toBe(100)
+    expect(() => writeComponentProperty(canvas([viewer]), 'camera', {}, 'viewWidth', 10, [])).toThrow(/cannot be changed/)
   })
 
   it('gives a duplicated field new child ids and handles', () => {

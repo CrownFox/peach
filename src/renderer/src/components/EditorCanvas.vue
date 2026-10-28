@@ -57,18 +57,32 @@ function onResize(event: PointerEvent, assetId: string): void {
   project.focusWindow(assetId)
   const origin = { x: event.clientX, y: event.clientY, left: win.x, top: win.y, width: win.width, height: win.height }
   const scale = zoom.value || 1
+  const keepAlt = (ev: KeyboardEvent): void => {
+    if (ev.key === 'Alt') ev.preventDefault()
+  }
   const move = (ev: PointerEvent): void => {
     const dx = (ev.clientX - origin.x) / scale
     const dy = (ev.clientY - origin.y) / scale
-    const next = resizeRect({ x: origin.left, y: origin.top, width: origin.width, height: origin.height }, dx, dy, edge, ev.shiftKey)
+    const next = resizeRect(
+      { x: origin.left, y: origin.top, width: origin.width, height: origin.height },
+      dx,
+      dy,
+      edge,
+      ev.ctrlKey || ev.metaKey,
+      ev.altKey
+    )
     project.resizeWindow(assetId, { x: next.x, y: next.y, width: next.width, height: next.height })
   }
   const up = (): void => {
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', up)
+    window.removeEventListener('keydown', keepAlt)
+    window.removeEventListener('keyup', keepAlt)
   }
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', up)
+  window.addEventListener('keydown', keepAlt)
+  window.addEventListener('keyup', keepAlt)
 }
 
 const canvasEl = ref<HTMLElement | null>(null)

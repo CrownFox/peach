@@ -159,6 +159,41 @@ describe('play session', () => {
     expect(session.frames[0]?.overrides.portrait?.imageRef).toBe('characters/Hero')
   })
 
+  it('ignores a click on a disabled image and calls a function written on the menu', () => {
+    const portrait = {
+      id: 'portrait',
+      type: 'image' as const,
+      name: 'Portrait',
+      handle: 'portrait',
+      scriptId: null,
+      script: `function onInteract() self.image = "characters/Hero" end`,
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+      imageId: null,
+      fit: 'stretch' as const,
+      tint: '#ffffff',
+      visible: true
+    }
+    const main = menu(
+      'main',
+      'Main Menu.menu.json',
+      `function onLoad()
+        self.portrait.enabled = false
+        self:paint()
+      end
+      function paint()
+        self.play.text = "Ready"
+      end`,
+      [button('play', 'play'), portrait]
+    )
+    const session = start([main, plate, plateButton, hero], 'main')
+    expect(session.frames[0]?.overrides.play?.text).toBe('Ready')
+    session.activate('portrait')
+    expect(session.frames[0]?.overrides.portrait?.imageRef).toBeUndefined()
+  })
+
   it('lets a local script replace a function from the referenced script', () => {
     const shared = {
       id: 'shared',
@@ -1248,8 +1283,8 @@ describe('play session', () => {
     const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
     town.script = `function onUpdate(dt)
       local view = game.currentMenu.camera
-      view.viewX = view.width
-      view.viewY = view.height
+      view.viewX = view.viewWidth
+      view.viewY = view.viewHeight
     end`
     town.components = []
     const open = (scaleWithViewer: boolean, displayScale: number): PlaySession => {
@@ -1929,6 +1964,79 @@ end`
       'scene menu 0'
     ])
     expect(session.currentOverrides().solid?.x).toBe(100)
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('checks collisionAt in a composite\'s own pixels', () => {
+    const piece = createMenuComponent('collider', [])
+    if (piece.type !== 'collider') throw new Error('collider')
+    piece.id = 'piece'
+    piece.handle = 'piece'
+    piece.tags = ['solid']
+    piece.x = 0
+    piece.y = 0
+    piece.width = 10
+    piece.height = 10
+    const card = createAsset('composite', 'Card', 'Card.composite.json', 'card') as CompositeAsset
+    card.components = [piece]
+    card.script = `function onLoad()
+      print("card at " .. #self:collisionAt(2, 2, {"solid"}))
+      print("card miss " .. #self:collisionAt(20, 20, {"solid"}))
+    end`
+    const slot = createMenuComponent('composite', [])
+    if (slot.type !== 'composite') throw new Error('slot')
+    slot.id = 'card'
+    slot.handle = 'card'
+    slot.compositeId = 'card'
+    slot.x = 100
+    slot.y = 100
+    const main = menu('main', 'Main Menu.menu.json', '', [slot])
+    const session = start([main, card], 'main')
+    expect(session.logs.map((entry) => entry.text)).toEqual(['card at 1', 'card miss 0'])
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('reports the pointer in menu pixels and in a composite', () => {
+    const card = createAsset('composite', 'Card', 'Card.composite.json', 'card') as CompositeAsset
+    card.width = 40
+    card.height = 20
+    card.script = `function onMouseDown()
+      print("card down")
+    end`
+    const slot = createMenuComponent('composite', [])
+    if (slot.type !== 'composite') throw new Error('slot')
+    slot.id = 'card'
+    slot.handle = 'card'
+    slot.compositeId = 'card'
+    slot.x = 100
+    slot.y = 50
+    slot.width = 40
+    slot.height = 20
+    const main = menu(
+      'main',
+      'Main Menu.menu.json',
+      `function onMouseEnter()
+        print("menu enter")
+      end
+      function onMouseDown()
+        local point = game.getMousePosition()
+        print("game " .. string.format("%d", point.x) .. " " .. string.format("%d", point.y))
+        local here = self:getMousePosition()
+        print("menu " .. string.format("%d", here.x) .. " " .. string.format("%d", here.y))
+      end
+      function onUpdate(dt)
+        local here = self.card:getMousePosition()
+        if here ~= nil then print("card " .. string.format("%d", here.x) .. " " .. string.format("%d", here.y)) end
+      end`,
+      [slot]
+    )
+    const session = start([main, card], 'main')
+    session.tick(16)
+    expect(session.logs.map((entry) => entry.text)).toEqual([])
+    session.setPointer({ x: 110, y: 60 }, { width: main.width, height: main.height })
+    session.pointerDown()
+    session.tick(16)
+    expect(session.logs.map((entry) => entry.text)).toEqual(['menu enter', 'card down', 'game 110 60', 'menu 110 60', 'card 10 10'])
     expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
   })
 

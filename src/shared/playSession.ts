@@ -1,4 +1,5 @@
 import { LuaHost, type PlayFrame } from './luaHost'
+import { menuPoint, surveyPointer, type MouseTarget, type Point } from './pointer'
 import { writeComponentProperty, type ComponentOverride, type SceneOverrides, type ScriptValue } from './overrides'
 import { findAssetByLocation } from './refs'
 import { assetLocation } from './paths'
@@ -18,6 +19,10 @@ export class PlaySession {
   onChange: () => void = () => {}
   private host: LuaHost | null = null
   private saves = new SaveLibrary()
+  private pointer: Point | null = null
+  private viewport = { width: 0, height: 0 }
+  private hovered: MouseTarget[] = []
+  private displayScale = 1
 
   attachSaves(port: SavePort | null): void {
     this.savePort = port
@@ -54,8 +59,11 @@ export class PlaySession {
       customInfo: (index) => this.saves.custom(index)?.meta ?? null,
       transferSaves: (kind, direction) => this.transferSaves(kind, direction)
     })
+    this.hovered = []
     if (entryId) this.navigate(entryId)
     else this.onChange()
+    this.host?.rememberPointer(this.pointer, this.viewport)
+    this.host?.setDisplayScale(this.displayScale)
   }
 
   navigate(menuId: string): void {
@@ -168,13 +176,36 @@ export class PlaySession {
   }
 
   setDisplayScale(scale: number): void {
-    this.host?.setDisplayScale(scale)
+    this.displayScale = Number.isFinite(scale) && scale > 0 ? scale : 1
+    this.host?.setDisplayScale(this.displayScale)
+  }
+
+  setPointer(point: Point | null, viewport: { width: number; height: number }): void {
+    this.pointer = point
+    this.viewport = viewport
+    this.host?.rememberPointer(point, viewport)
+    this.syncHover()
+  }
+
+  pointerDown(): void {
+    this.syncHover()
+    const frame = this.activeFrame()
+    if (!frame || !this.pointer) return
+    this.host?.dispatchMouse(frame, this.hovered, 'onMouseDown')
+  }
+
+  pointerUp(): void {
+    this.syncHover()
+    const frame = this.activeFrame()
+    if (!frame || !this.pointer) return
+    this.host?.dispatchMouse(frame, this.hovered, 'onMouseUp')
   }
 
   tick(elapsedMs: number): void {
     this.advanceText(elapsedMs)
     const top = this.modals.at(-1) ?? this.frames[this.index]
     if (top) this.host?.advanceUpdate(top, elapsedMs)
+    this.syncHover()
   }
 
   advanceText(elapsedMs: number): void {
@@ -199,7 +230,7 @@ export class PlaySession {
 
   setPageInput(componentId: string, key: string, value: string): void {
     const frame = this.activeFrame()
-    if (!frame) return
+    if (!frame || !this.host?.usable(frame, componentId)) return
     const current = { ...(frame.overrides[componentId] ?? {}) }
     current.pageInputs = { ...(current.pageInputs ?? {}), [key]: value }
     frame.overrides[componentId] = current
@@ -215,7 +246,7 @@ export class PlaySession {
     const frame = this.activeFrame()
     if (!frame) return
     const menu = this.assetsOf().find((asset) => asset.id === frame.menuId && asset.type === 'menu')
-    if (!menu || menu.type !== 'menu') return
+    if (!menu || menu.type !== 'menu' || !this.host?.usable(frame, componentId)) return
     try {
       writeComponentProperty(menu, componentId, frame.overrides, 'value', value, this.assetsOf())
       this.host?.emitChange(frame, componentId)
@@ -278,6 +309,28 @@ export class PlaySession {
 
   private activeFrame(): PlayFrame | undefined {
     return this.modals.at(-1) ?? this.frames[this.index]
+  }
+
+  private syncHover(): void {
+    const frame = this.activeFrame()
+    const next = frame && this.pointer ? this.hoverTargets(frame) : []
+    const key = (target: MouseTarget): string => `${target.kind}:${target.id}`
+    const previous = new Set(this.hovered.map(key))
+    const upcoming = new Set(next.map(key))
+    const left = this.hovered.filter((target) => !upcoming.has(key(target)))
+    const entered = next.filter((target) => !previous.has(key(target)))
+    this.hovered = next
+    if (!frame) return
+    this.host?.dispatchMouse(frame, left, 'onMouseLeave')
+    this.host?.dispatchMouse(frame, entered, 'onMouseEnter')
+  }
+
+  private hoverTargets(frame: PlayFrame): MouseTarget[] {
+    if (!this.pointer) return []
+    const menu = this.assetsOf().find((asset) => asset.id === frame.menuId && asset.type === 'menu')
+    if (!menu || menu.type !== 'menu') return []
+    const point = menuPoint(this.pointer, this.viewport, menu.width, menu.height)
+    return surveyPointer(menu, this.assetsOf(), frame.overrides, point, this.displayScale).targets
   }
 
   private dismissModals(): void {

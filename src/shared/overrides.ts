@@ -1,8 +1,8 @@
 import { ownsZ, resolvePiece } from './composites'
 import { componentColor } from './color'
+import { readShared, writeShared } from './runtime'
 import { assetLocation } from './paths'
 import { findAssetByLocation } from './refs'
-import { viewerSize } from './sceneCamera'
 import type { Asset, ButtonAsset, MenuAsset, MenuComponent, TileCell, ToggleGroupComponent } from './types'
 
 export type ScriptValue = string | number | boolean | string[] | null
@@ -31,6 +31,8 @@ export type ComponentOverride = {
   viewX?: number
   viewY?: number
   scale?: number
+  width?: number
+  height?: number
   sceneRef?: string | null
   tilesetRef?: string | null
   tileX?: number
@@ -91,11 +93,10 @@ export function readComponentProperty(
   key: string,
   displayScale = 1
 ): ScriptValue {
+  const shared = readShared(component, override, key, displayScale)
+  if (shared !== undefined) return shared
   if ((component.type === 'button' || component.type === 'label' || component.type === 'toggle') && key === 'text') {
     return override?.text ?? component.text
-  }
-  if ((component.type === 'button' || component.type === 'composite' || component.type === 'collider') && key === 'enabled') {
-    return override?.enabled ?? component.enabled
   }
   if (component.type === 'collider' && key === 'tags') return cleanTags(override?.tags ?? component.tags)
   if (component.type === 'collider' && key === 'shape') return component.shape
@@ -133,22 +134,10 @@ export function readComponentProperty(
     return range[key]
   }
   if (key === 'value') return readControlValue(component, override)
-  if (key === 'color') return override?.tint ?? component.tint
-  if (key === 'visible') return override?.visible ?? component.visible
-  if (key === 'x') return typeof override?.x === 'number' ? override.x : component.x
-  if (key === 'y') return typeof override?.y === 'number' ? override.y : component.y
-  if (key === 'z') {
-    if (component.type === 'zField') return null
-    const z = typeof override?.z === 'number' ? override.z : component.z
-    return typeof z === 'number' && Number.isFinite(z) ? z : null
-  }
   if (component.type === 'sceneViewer' && key === 'viewX') return typeof override?.viewX === 'number' ? override.viewX : component.viewX
   if (component.type === 'sceneViewer' && key === 'viewY') return typeof override?.viewY === 'number' ? override.viewY : component.viewY
   if (component.type === 'sceneViewer' && key === 'scale') {
     return typeof override?.scale === 'number' ? override.scale : component.scale
-  }
-  if (component.type === 'sceneViewer' && (key === 'width' || key === 'height')) {
-    return viewerSize(component, override, displayScale)[key]
   }
   if (component.type === 'sceneViewer' && key === 'scene') {
     if (override && 'sceneRef' in override) return override.sceneRef ?? null
@@ -175,6 +164,10 @@ export function writeComponentProperty(
   if (!found) throw new Error('That component is no longer on this menu.')
   const component = found.component
   const current: ComponentOverride = { ...(overrides[componentId] ?? {}) }
+  if (writeShared(component, current, key, value, assets)) {
+    overrides[componentId] = current
+    return
+  }
   if (value === null && component.type === 'pageViewer' && key === 'book') {
     delete current.bookRef
     delete current.pageBook

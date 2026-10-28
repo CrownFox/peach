@@ -29,7 +29,7 @@ describe('component script template', () => {
     expect(source).toContain('function onInteract()')
     expect(source).toContain('self.image')
     expect(source).toContain('self:click()')
+    expect(source).toContain('self.enabled')
     expect(source).not.toContain('self.text')
-    expect(source).not.toContain('self.enabled')
   })
 })

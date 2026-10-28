@@ -1,3 +1,4 @@
+import { readEnabled } from './runtime'
 import { sceneById } from './sceneCamera'
 import type { Asset, CanvasAsset, CompositeAsset, MenuAsset, MenuComponent, ZFieldComponent } from './types'
 import { directPieces, findInList } from './zField'
@@ -178,10 +179,10 @@ export function instanceEnabled(
     const found = findInList(components, parts[index] ?? '')
     const component = found?.component
     if (!component) return false
+    if (found.field && !readEnabled(found.field, overrides[[...parts.slice(0, index), found.field.id].join('/')])) return false
     const key = parts.slice(0, index + 1).join('/')
-    if (component.type === 'composite' || component.type === 'button') {
-      enabled = enabled && (overrides[key]?.enabled ?? component.enabled)
-    }
+    const container = component.type === 'composite' || component.type === 'zField'
+    if (container || index === parts.length - 1) enabled = enabled && readEnabled(component, overrides[key])
     if (!enabled) return false
     if (index < parts.length - 1) {
       if (component.type !== 'composite') return false
@@ -211,9 +212,10 @@ export function scenePieceAllows(
     if (mode === 'visible' && found.field && !layerShown(found.field, parts.slice(0, index), overrides, sceneId)) return false
     const key = `scene:${sceneId}/${parts.slice(0, index + 1).join('/')}`
     if (mode === 'visible' && (overrides[key]?.visible ?? component.visible) === false) return false
-    if (mode === 'enabled' && (component.type === 'button' || component.type === 'composite')) {
-      const enabled = component.type === 'button' || component.type === 'composite' ? component.enabled : true
-      if ((overrides[key]?.enabled ?? enabled) === false) return false
+    if (mode === 'enabled' && found.field && !readEnabled(found.field, overrides[`scene:${sceneId}/${[...parts.slice(0, index), found.field.id].join('/')}`])) return false
+    if (mode === 'enabled') {
+      const container = component.type === 'composite' || component.type === 'zField'
+      if ((container || index === parts.length - 1) && !readEnabled(component, overrides[key])) return false
     }
     if (index < parts.length - 1) {
       if (component.type !== 'composite') return false

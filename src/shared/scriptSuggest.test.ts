@@ -21,26 +21,35 @@ describe('script suggestions', () => {
   })
 
   it('suggests menu handles and then that component’s fields', () => {
-    expect(scriptSuggestions('game.currentMenu.', menu).map((item) => item.label)).toEqual(['play', 'portrait'])
+    expect(scriptSuggestions('game.currentMenu.', menu).map((item) => item.label)).toEqual([
+      'play', 'portrait', 'type', 'name', 'width', 'height', 'collisionAt', 'getMousePosition', 'onLoad', 'onUpdate', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave'
+    ])
     const play = scriptSuggestions('game.currentMenu.play.', button).map((item) => item.label)
     expect(play).toContain('text')
     expect(play).toContain('enabled')
+    expect(play).toContain('width')
     expect(play).not.toContain('image')
-    expect(scriptSuggestions('game.currentMenu.portrait.', menu).map((item) => item.label)).toEqual(['image', 'click', 'x', 'y', 'z', 'visible', 'color'])
+    expect(scriptSuggestions('game.currentMenu.portrait.', menu).map((item) => item.label)).toEqual([
+      'image', 'click', 'onInteract', 'type', 'name', 'x', 'y', 'width', 'height', 'visible', 'color', 'enabled', 'z', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave'
+    ])
   })
 
   it('suggests value on a text component and not a click', () => {
     const text: ScriptHints = { self: 'text', handles: [] }
-    expect(scriptSuggestions('self.', text).map((item) => item.label)).toEqual(['value', 'panel', 'x', 'y', 'z', 'visible', 'color'])
+    expect(scriptSuggestions('self.', text).map((item) => item.label)).toEqual([
+      'value', 'panel', 'onChange', 'type', 'name', 'x', 'y', 'width', 'height', 'visible', 'color', 'enabled', 'z', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave'
+    ])
     expect(scriptSuggestions('self:', text)).toEqual([])
   })
 
   it('suggests self from the script’s point of view', () => {
-    expect(scriptSuggestions('self.', menu).map((item) => item.label)).toEqual(['play', 'portrait'])
+    expect(scriptSuggestions('self.', menu).map((item) => item.label)).toEqual([
+      'play', 'portrait', 'type', 'name', 'width', 'height', 'collisionAt', 'getMousePosition', 'onLoad', 'onUpdate', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave'
+    ])
     expect(scriptSuggestions('self.', button).map((item) => item.label)).toContain('defaultImage')
     expect(scriptSuggestions('self.', button).map((item) => item.label)).toContain('x')
     expect(scriptSuggestions('self:', button).map((item) => item.label)).toEqual(['click'])
-    expect(scriptSuggestions('self:', menu).map((item) => item.label)).toEqual(['collisionAt'])
+    expect(scriptSuggestions('self:', menu).map((item) => item.label)).toEqual(['collisionAt', 'getMousePosition'])
   })
 
   it('suggests openMenu as a call and string library functions', () => {
@@ -65,8 +74,27 @@ describe('script suggestions', () => {
     expect(scriptSuggestions('game.', menu).map((item) => item.label)).toContain('importCustomSaves')
     expect(scriptSuggestions('', menu).map((item) => item.label)).toContain('BTN_SPACE')
     expect(scriptSuggestions('', menu).map((item) => item.label)).not.toContain('closeModal')
-    expect(scriptSuggestions('game.currentModal.', menu).map((item) => item.label)).toEqual(['play', 'portrait'])
+    expect(scriptSuggestions('game.currentModal.', menu).map((item) => item.label)).toEqual([
+      'play', 'portrait', 'type', 'name', 'width', 'height', 'collisionAt', 'getMousePosition', 'onLoad', 'onUpdate', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave'
+    ])
     expect(scriptSuggestions('string.', menu).map((item) => item.label)).toContain('upper')
+  })
+
+  it('follows a component through a composite and a scene viewer', () => {
+    const nested: ScriptHints = {
+      self: 'menu',
+      handles: [
+        { name: 'card', type: 'composite', children: [{ name: 'mark', type: 'label' }] },
+        { name: 'camera', type: 'sceneViewer', children: [{ name: 'hero', type: 'collider' }] }
+      ]
+    }
+    expect(scriptSuggestions('self.card.', nested).map((item) => item.label)).toContain('mark')
+    expect(scriptSuggestions('self.card.', nested).map((item) => item.label)).toContain('getMousePosition')
+    expect(scriptSuggestions('self.card.mark.', nested).map((item) => item.label)).toContain('text')
+    expect(scriptSuggestions('self.card:', nested).map((item) => item.label)).toEqual(['collisionAt', 'getMousePosition'])
+    expect(scriptSuggestions('game.currentMenu.camera.hero:', nested).map((item) => item.label)).toEqual(['collisionWith'])
+    const viewer: ScriptHints = { self: 'sceneViewer', handles: [], children: [{ name: 'hero', type: 'label' }] }
+    expect(scriptSuggestions('self.hero.', viewer).map((item) => item.label)).toContain('text')
   })
 
   it('suggests the page viewer for parent in a page script', () => {

@@ -1,15 +1,21 @@
 import type { MenuComponent } from './types'
 import { KEYS } from './keys'
 import { propertiesInScope, type ScriptProperty } from './scriptProperties'
+import { canvasSurface, componentSurface, type ApiEntry } from './runtime'
 
 export type ScriptHandle = {
   name: string
   type: MenuComponent['type']
+  children?: ScriptHandle[]
 }
+
+export type ScriptHost = 'menu' | 'scene' | 'composite' | MenuComponent['type']
 
 export type ScriptHints = {
   handles: ScriptHandle[]
-  self: 'menu' | 'scene' | MenuComponent['type'] | 'any'
+  self: ScriptHost | 'any'
+  hosts?: ScriptHost[]
+  children?: ScriptHandle[]
   parent?: 'pageViewer'
   suggestProperties?: boolean
   propertySources?: string[]
@@ -23,95 +29,10 @@ export type Suggestion = {
   detail: string
 }
 
-const buttonFields: Suggestion[] = [
-  { label: 'text', insertText: 'text', kind: 'field', detail: 'Label' },
-  { label: 'enabled', insertText: 'enabled', kind: 'field', detail: 'true or false. False ignores clicks' },
-  { label: 'button', insertText: 'button', kind: 'field', detail: 'Button path' },
-  { label: 'defaultImage', insertText: 'defaultImage', kind: 'field', detail: 'Image path' },
-  { label: 'pressedImage', insertText: 'pressedImage', kind: 'field', detail: 'Image path' },
-  { label: 'disabledImage', insertText: 'disabledImage', kind: 'field', detail: 'Image path' },
-  { label: 'click', insertText: 'click()', kind: 'function', detail: 'Run onInteract' }
-]
-
-const imageFields: Suggestion[] = [
-  { label: 'image', insertText: 'image', kind: 'field', detail: 'Image path' },
-  { label: 'click', insertText: 'click()', kind: 'function', detail: 'Run onInteract' }
-]
-
-const panelField: Suggestion = { label: 'panel', insertText: 'panel', kind: 'field', detail: 'Panel path' }
-const valueField: Suggestion = { label: 'value', insertText: 'value', kind: 'field', detail: 'The current value' }
-const textField: Suggestion = { label: 'text', insertText: 'text', kind: 'field', detail: 'Label' }
-const rangeFields: Suggestion[] = [
-  valueField,
-  { label: 'min', insertText: 'min', kind: 'field', detail: 'Lowest number' },
-  { label: 'max', insertText: 'max', kind: 'field', detail: 'Highest number' },
-  panelField
-]
-
-const fieldsByType: Record<MenuComponent['type'], Suggestion[]> = {
-  button: buttonFields,
-  image: imageFields,
-  panel: [panelField],
-  label: [textField, panelField],
-  meter: rangeFields,
-  text: [valueField, panelField],
-  textarea: [valueField, panelField],
-  toggle: [valueField, textField, panelField],
-  toggleGroup: [valueField, panelField],
-  slider: rangeFields,
-  dropdown: [valueField, panelField],
-  pageViewer: [
-    { label: 'book', insertText: 'book', kind: 'field', detail: 'Book path' },
-    { label: 'page', insertText: 'page', kind: 'field', detail: 'Chapter/page path' },
-    panelField,
-    { label: 'loadPage', insertText: 'loadPage(${1:book}, "${2:Chapter/Page}")', kind: 'function', detail: 'Show a page from a book' },
-    { label: 'get', insertText: 'get("${1:field}")', kind: 'function', detail: 'Read a page data field' },
-    { label: 'getInput', insertText: 'getInput("${1:key}")', kind: 'function', detail: 'Read a text field or dropdown' },
-    { label: 'progressive', insertText: 'progressive', kind: 'field', detail: 'true streams the page in. false shows it all at once' },
-    { label: 'scrollable', insertText: 'scrollable', kind: 'field', detail: 'true scrolls. false hides the rest of the page' },
-    { label: 'rate', insertText: 'rate', kind: 'field', detail: 'Characters per second' },
-    { label: 'finished', insertText: 'finished', kind: 'field', detail: 'true when the page has finished streaming' },
-    { label: 'start', insertText: 'start()', kind: 'function', detail: 'Stream the page again from the first character' },
-    { label: 'stop', insertText: 'stop()', kind: 'function', detail: 'Pause the stream' },
-    { label: 'resume', insertText: 'resume()', kind: 'function', detail: 'Continue a paused stream' },
-    { label: 'finish', insertText: 'finish()', kind: 'function', detail: 'Show the rest of the page immediately' }
-  ],
-  composite: [{ label: 'enabled', insertText: 'enabled', kind: 'field', detail: 'true or false. False leaves the pieces inside unclickable' }],
-  sceneViewer: [
-    { label: 'viewX', insertText: 'viewX', kind: 'field', detail: 'Left edge of the view, in scene pixels' },
-    { label: 'viewY', insertText: 'viewY', kind: 'field', detail: 'Top edge of the view, in scene pixels' },
-    { label: 'scale', insertText: 'scale', kind: 'field', detail: 'Whole number. 2 draws each scene pixel as 2 by 2' },
-    { label: 'width', insertText: 'width', kind: 'field', detail: 'Scene pixels visible across the view. It follows the scale' },
-    { label: 'height', insertText: 'height', kind: 'field', detail: 'Scene pixels visible down the view. It follows the scale' },
-    { label: 'scene', insertText: 'scene', kind: 'field', detail: 'Scene path' }
-  ],
-  tile: [
-    { label: 'setTile', insertText: 'setTile(${1:tileset}, ${2:x}, ${3:y})', kind: 'function', detail: 'Show one tile from a tileset. The chosen cell lands on this tile, and a merged picture hangs off it' },
-    { label: 'tileset', insertText: 'tileset', kind: 'field', detail: 'Tileset path' },
-    { label: 'tileX', insertText: 'tileX', kind: 'field', detail: 'Column in the tileset. 0 is the left column' },
-    { label: 'tileY', insertText: 'tileY', kind: 'field', detail: 'Row in the tileset. 0 is the top row' }
-  ],
-  tilemap: [
-    { label: 'getTile', insertText: 'getTile(${1:x}, ${2:y})', kind: 'function', detail: 'Tileset path, column, and row at a cell. Nil when that cell is empty' },
-    { label: 'setTile', insertText: 'setTile(${1:x}, ${2:y}, ${3:tileset}, ${4:column}, ${5:row})', kind: 'function', detail: 'Paint a tile from a tileset onto this cell. The chosen cell lands on the map cell' }
-  ],
-  collider: [
-    { label: 'collisionWith', insertText: 'collisionWith({${1:"solid"}})', kind: 'function', detail: 'Other colliders on this canvas that overlap and have any of these tags' },
-    { label: 'tags', insertText: 'tags', kind: 'field', detail: 'Names on this collider, such as solid or hurt' },
-    { label: 'shape', insertText: 'shape', kind: 'field', detail: '"square" or "circle"' },
-    { label: 'enabled', insertText: 'enabled', kind: 'field', detail: 'true or false. False skips this collider' }
-  ],
-  zField: []
-}
-
-const collisionAtField: Suggestion = {
-  label: 'collisionAt',
-  insertText: 'collisionAt(${1:x}, ${2:y}, {${3:"solid"}})',
-  kind: 'function',
-  detail: 'Colliders on this canvas that contain the point and have any of these tags'
-}
-
-const componentTypes = Object.keys(fieldsByType) as MenuComponent['type'][]
+const componentTypes = [
+  'button', 'image', 'panel', 'label', 'meter', 'text', 'textarea', 'toggle', 'toggleGroup', 'slider', 'dropdown',
+  'pageViewer', 'composite', 'sceneViewer', 'tile', 'tilemap', 'collider', 'zField'
+] as const satisfies readonly MenuComponent['type'][]
 
 const libraries: Record<string, Suggestion[]> = {
   string: fields(['byte', 'char', 'find', 'format', 'gmatch', 'gsub', 'len', 'lower', 'match', 'rep', 'reverse', 'sub', 'upper']),
@@ -129,6 +50,10 @@ const globals: Suggestion[] = [
   { label: 'onUpdate', insertText: 'onUpdate', kind: 'function', detail: 'Called every frame while a menu, scene, or composite is on screen' },
   { label: 'onInteract', insertText: 'onInteract', kind: 'function', detail: 'Called when a button or image is clicked' },
   { label: 'onChange', insertText: 'onChange', kind: 'function', detail: 'Called when the player edits an input' },
+  { label: 'onMouseDown', insertText: 'onMouseDown', kind: 'function', detail: 'Called when the pointer presses this component or canvas' },
+  { label: 'onMouseUp', insertText: 'onMouseUp', kind: 'function', detail: 'Called when the pointer is released over this component or canvas' },
+  { label: 'onMouseEnter', insertText: 'onMouseEnter', kind: 'function', detail: 'Called when the pointer enters this component or canvas' },
+  { label: 'onMouseLeave', insertText: 'onMouseLeave', kind: 'function', detail: 'Called when the pointer leaves this component or canvas' },
   { label: 'function', insertText: 'function ${1:name}()\n\t$0\nend', kind: 'snippet', detail: 'Define a function' },
   { label: 'if', insertText: 'if ${1:condition} then\n\t$0\nend', kind: 'snippet', detail: 'If statement' },
   { label: 'for', insertText: 'for ${1:i} = ${2:1}, ${3:n} do\n\t$0\nend', kind: 'snippet', detail: 'Counted loop' },
@@ -176,6 +101,7 @@ function members(member: { chain: string[]; colon: boolean }, hints: ScriptHints
       { label: 'loadPage', insertText: 'loadPage(${1:viewer}, ${2:bookPage})', kind: 'function', detail: 'Show a book and page on a page viewer' },
       { label: 'registerKey', insertText: 'registerKey(${1:BTN_A}, "${2:down}", ${3:onKey})', kind: 'function', detail: 'Listen for a key while this menu is on screen' },
       { label: 'keyDown', insertText: 'keyDown(${1:BTN_A})', kind: 'function', detail: 'True while a key is held' },
+      { label: 'getMousePosition', insertText: 'getMousePosition()', kind: 'function', detail: 'Pointer position in the open menu, with x and y' },
       { label: 'saveSlot', insertText: 'saveSlot(${1:1})', kind: 'function', detail: 'Save the game into a slot' },
       { label: 'loadSlot', insertText: 'loadSlot(${1:1})', kind: 'function', detail: 'Load a slot and open that menu' },
       { label: 'slotInfo', insertText: 'slotInfo(${1:1})', kind: 'function', detail: 'Icon and time for a slot, or nil' },
@@ -188,26 +114,8 @@ function members(member: { chain: string[]; colon: boolean }, hints: ScriptHints
       { label: 'exportCustomSaves', insertText: 'exportCustomSaves()', kind: 'function', detail: 'Write every custom slot to a file' }
     ]
   }
-  if (chain[0] === 'game' && chain[1] === 'currentMenu' && chain.length === 2) return colon ? [collisionAtField] : handleSuggestions(hints)
-  if (chain[0] === 'game' && chain[1] === 'currentMenu' && chain.length === 3) {
-    return componentFields(typesFor(chain[2] ?? '', hints), colon)
-  }
-  if (chain[0] === 'game' && chain[1] === 'currentModal' && chain.length === 2) return colon ? [collisionAtField] : handleSuggestions(hints)
-  if (chain[0] === 'game' && chain[1] === 'currentModal' && chain.length === 3) {
-    return componentFields(typesFor(chain[2] ?? '', hints), colon)
-  }
-  if (chain.length === 1 && chain[0] === 'parent' && hints.parent) return componentFields([hints.parent], colon)
-  if (chain.length === 1 && chain[0] === 'self') {
-    if (hints.self === 'menu' || hints.self === 'scene') return colon ? [collisionAtField] : handleSuggestions(hints)
-    if (hints.self === 'composite') {
-      if (colon) return []
-      const children = handleSuggestions(hints)
-      const own = componentFields(['composite'], false).filter((item) => !children.some((child) => child.label === item.label))
-      return [...children, ...own]
-    }
-    const types = hints.self === 'any' ? componentTypes : [hints.self]
-    return componentFields(types, colon)
-  }
+  const resolved = resolveChain(chain, hints)
+  if (resolved) return suggestResolved(resolved, colon)
   if (!colon && chain.length === 1) {
     const property = properties.find((item) => item.name === chain[0])
     if (property?.type === 'bookPage') {
@@ -247,9 +155,70 @@ function propertySuggestion(property: ScriptProperty): Suggestion {
   }
 }
 
-function handleSuggestions(hints: ScriptHints): Suggestion[] {
+function resolveChain(chain: string[], hints: ScriptHints): { kinds: Array<ScriptHost | 'any'>; handles: ScriptHandle[] } | null {
+  if (chain[0] === 'parent' && hints.parent) return walkHandles('pageViewer', [], chain.slice(1))
+  if (chain[0] === 'game' && (chain[1] === 'currentMenu' || chain[1] === 'currentModal')) return walkHandles('menu', hints.handles, chain.slice(2))
+  if (chain[0] !== 'self') return null
+  if (chain.length === 1 && hints.hosts && hints.hosts.length > 1) return { kinds: hints.hosts, handles: hints.handles }
+  if (hints.self === 'any') {
+    if (chain.length !== 1) return null
+    return { kinds: ['any'], handles: [] }
+  }
+  const handles =
+    hints.self === 'menu' || hints.self === 'scene' || hints.self === 'composite'
+      ? hints.handles
+      : hints.self === 'sceneViewer'
+        ? hints.children ?? []
+        : []
+  return walkHandles(hints.self, handles, chain.slice(1))
+}
+
+function walkHandles(kind: ScriptHost, handles: readonly ScriptHandle[], names: string[]): { kinds: ScriptHost[]; handles: ScriptHandle[] } | null {
+  let kinds: ScriptHost[] = [kind]
+  let current = handles
+  for (const name of names) {
+    const matches = current.filter((handle) => handle.name === name)
+    if (matches.length === 0) return null
+    kinds = [...new Set(matches.map((handle) => handle.type))]
+    current = matches.flatMap((handle) => handle.children ?? [])
+  }
+  return { kinds, handles: [...current] }
+}
+
+function suggestResolved(resolved: { kinds: Array<ScriptHost | 'any'>; handles: ScriptHandle[] }, methodsOnly: boolean): Suggestion[] {
+  if (resolved.kinds.length === 1 && resolved.kinds[0] === 'any') return componentFields(componentTypes, methodsOnly)
+  return dedupe(
+    resolved.kinds.flatMap((kind) => {
+      if (kind === 'any') return componentFields(componentTypes, methodsOnly)
+      const handles = kind === 'menu' || kind === 'scene' || kind === 'composite' || kind === 'sceneViewer' ? resolved.handles : []
+      return suggestHost(kind, handles, methodsOnly)
+    })
+  )
+}
+
+function suggestHost(kind: ScriptHost, handles: readonly ScriptHandle[], methodsOnly: boolean): Suggestion[] {
+  if (kind === 'menu' || kind === 'scene') {
+    const fields = canvasFields(kind, methodsOnly)
+    if (methodsOnly) return fields
+    return [...handleSuggestions(handles), ...fields]
+  }
+  const children = methodsOnly ? [] : handleSuggestions(handles)
+  const own = componentFields([kind], methodsOnly).filter((item) => !children.some((child) => child.label === item.label))
+  return [...children, ...own]
+}
+
+function dedupe(items: Suggestion[]): Suggestion[] {
+  const seen = new Set<string>()
+  return items.filter((item) => {
+    if (seen.has(item.label)) return false
+    seen.add(item.label)
+    return true
+  })
+}
+
+function handleSuggestions(handles: readonly ScriptHandle[]): Suggestion[] {
   const byName = new Map<string, Set<string>>()
-  for (const handle of hints.handles) {
+  for (const handle of handles) {
     const types = byName.get(handle.name) ?? new Set<string>()
     types.add(handle.type)
     byName.set(handle.name, types)
@@ -262,26 +231,28 @@ function handleSuggestions(hints: ScriptHints): Suggestion[] {
   }))
 }
 
-function typesFor(name: string, hints: ScriptHints): MenuComponent['type'][] {
-  return hints.handles.filter((handle) => handle.name === name).map((handle) => handle.type)
+function apiSuggestion(entry: ApiEntry): Suggestion {
+  return {
+    label: entry.name,
+    insertText: entry.insertText ?? entry.name,
+    kind: entry.kind === 'call' ? 'function' : 'field',
+    detail: entry.detail
+  }
+}
+
+function canvasFields(kind: 'menu' | 'scene', methodsOnly: boolean): Suggestion[] {
+  const surface = canvasSurface(kind)
+  return [...surface.shared, ...surface.own].filter((entry) => !methodsOnly || entry.kind === 'call').map(apiSuggestion)
 }
 
 function componentFields(types: readonly MenuComponent['type'][], methodsOnly: boolean): Suggestion[] {
-  const items = types.flatMap((type) => fieldsByType[type] ?? [])
-  const chosen = methodsOnly ? items.filter((item) => item.kind === 'function') : items
-  const layerOnly = types.length > 0 && types.every((type) => type === 'zField')
-  if (!methodsOnly && !layerOnly) {
-    chosen.push({ label: 'x', insertText: 'x', kind: 'field', detail: 'Horizontal position, in the same pixels as the editor' })
-    chosen.push({ label: 'y', insertText: 'y', kind: 'field', detail: 'Vertical position, in the same pixels as the editor' })
-    chosen.push({ label: 'z', insertText: 'z', kind: 'field', detail: 'Draw order inside a Z field. Higher draws in front. Equal values keep the order in the field' })
-    chosen.push({ label: 'visible', insertText: 'visible', kind: 'field', detail: 'true or false. False hides this component' })
-    chosen.push({ label: 'color', insertText: 'color', kind: 'field', detail: 'A color such as "#ff8800". White leaves the component unchanged' })
-  } else if (!methodsOnly) {
-    chosen.push({ label: 'visible', insertText: 'visible', kind: 'field', detail: 'true or false. False hides every component in this field' })
-    chosen.push({ label: 'color', insertText: 'color', kind: 'field', detail: 'A color such as "#ff8800". It tints every component in this field' })
-  }
+  const items = types.flatMap((type) => {
+    const surface = componentSurface(type)
+    const entries = [...surface.own, ...surface.shared]
+    return entries.filter((entry) => !methodsOnly || entry.kind === 'call').map(apiSuggestion)
+  })
   const seen = new Set<string>()
-  return chosen.filter((item) => {
+  return items.filter((item) => {
     if (seen.has(item.label)) return false
     seen.add(item.label)
     return true

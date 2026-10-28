@@ -7,6 +7,7 @@ import { assetLocation } from '@shared/paths'
 import { compositeBlocked } from '@shared/composites'
 import { applyIntrinsicSize, intrinsicSize } from '@shared/intrinsicSize'
 import { fitTileSpan, imageForTileset, mapSize, mergeAt, pruneCells, tileGrid, tilemapCellSize, tilesetById } from '@shared/tiles'
+import { scriptDocs } from '@shared/runtime'
 import { isCanvas, type ButtonComponent } from '@shared/types'
 import { enclosingField, findComponent, handleTaken, type LayerPlace } from '@shared/zField'
 import { fileUrl } from '@/thumbs'
@@ -72,6 +73,7 @@ const editingFieldId = computed(() => {
   return session.zFieldEdit.slice(menu.value.id.length + 1)
 })
 const scriptKey = computed(() => (project.workspace.activeTab.startsWith('script:') ? project.workspace.activeTab.slice(7) : ''))
+const scriptReference = computed(() => (scriptKey.value ? scriptDocs(project.assets, scriptKey.value) : []))
 const focused = computed(() => {
   if (project.workspace.activeTab !== 'editor') return null
   const id = project.focusedWindow?.assetId ?? null
@@ -760,7 +762,14 @@ function patchButton(recipe: (component: ButtonComponent) => void): void {
 
     <template v-else-if="scriptKey">
       <p>Script</p>
-      <p class="tree-hint">Hooks are <code>onLoad</code> on a menu, scene, or composite, and <code>onUpdate</code> on a menu, scene, or composite. <code>onInteract</code> runs on a button or image, and <code>onChange</code> on an input. A local script replaces functions from the script asset it references. Use <code>game.state</code> for values that should last across menus, including a collection loaded with <code>game.loadCollection</code>.</p>
+      <section v-for="doc in scriptReference" :key="doc.title" class="script-api">
+        <p>{{ doc.title }}</p>
+        <p v-if="doc.note" class="tree-hint">{{ doc.note }}</p>
+        <div v-for="block in doc.blocks" :key="block.label">
+          <p class="script-api-label">{{ block.label }}</p>
+          <p v-for="entry in block.entries" :key="entry.name" class="tree-hint"><code>{{ entry.label ?? entry.name }}</code> {{ entry.detail }}</p>
+        </div>
+      </section>
     </template>
 
     <template v-else-if="project.workspace.activeTab.startsWith('collection:')">

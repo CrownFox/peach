@@ -140,7 +140,30 @@ async function load(container: HTMLElement): Promise<void> {
     session.refreshPages()
     draw()
   }
-  window.addEventListener('pointerup', () => {
+  const viewportSize = (): { width: number; height: number } => ({ width: container.clientWidth, height: container.clientHeight })
+  const pointerAt = (event: PointerEvent): { x: number; y: number } | null => {
+    const bounds = container.getBoundingClientRect()
+    const point = { x: event.clientX - bounds.left, y: event.clientY - bounds.top }
+    const size = viewportSize()
+    const inside = point.x >= 0 && point.y >= 0 && point.x <= size.width && point.y <= size.height
+    return inside ? point : null
+  }
+  container.addEventListener('pointermove', (event) => {
+    session.setPointer(pointerAt(event), viewportSize())
+  })
+  container.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return
+    session.setPointer(pointerAt(event), viewportSize())
+    session.pointerDown()
+  })
+  container.addEventListener('pointerleave', () => {
+    session.setPointer(null, viewportSize())
+  })
+  window.addEventListener('pointerup', (event) => {
+    if (event.button === 0) {
+      session.setPointer(pointerAt(event), viewportSize())
+      session.pointerUp()
+    }
     if (!pressedId) return
     pressedId = null
     draw()

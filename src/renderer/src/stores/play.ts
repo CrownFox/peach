@@ -81,6 +81,15 @@ export const usePlayStore = defineStore('play', {
     setDisplayScale(scale: number) {
       session?.setDisplayScale(scale)
     },
+    setPointer(point: { x: number; y: number } | null, viewport: { width: number; height: number }) {
+      session?.setPointer(point, viewport)
+    },
+    pointerDown() {
+      session?.pointerDown()
+    },
+    pointerUp() {
+      session?.pointerUp()
+    },
     tick(elapsedMs: number) {
       session?.tick(elapsedMs)
     },
