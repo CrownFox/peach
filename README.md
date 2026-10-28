@@ -12,7 +12,7 @@ An editor for menu-driven games. Build menus, books, and collections, script the
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/) 20 or newer
+- [Node.js](https://nodejs.org/) 22.12 or newer
 - npm
 
 ## Getting started
@@ -21,6 +21,8 @@ An editor for menu-driven games. Build menus, books, and collections, script the
 npm install
 npm run dev
 ```
+
+The first dev start downloads the Electron binary.
 
 ## Scripts
 

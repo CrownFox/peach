@@ -8,9 +8,8 @@
     "esModuleInterop": true,
     "noEmit": true,
     "types": ["node"],
-    "baseUrl": ".",
     "paths": {
-      "@shared/*": ["src/shared/*"]
+      "@shared/*": ["./src/shared/*"]
     }
   },
   "include": [
@@ -19,6 +18,6 @@
     "src/preload/**/*",
     "src/shared/**/*",
     "src/player/**/*",
-    "vitest.config.ts"
+    "vitest.config.mts"
   ]
 }

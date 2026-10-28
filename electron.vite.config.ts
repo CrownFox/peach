@@ -1,7 +1,7 @@
 import { resolve } from 'path'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
-import { fengariStubPlugin, fengariViteStub } from './fengariStub'
+import { fengariViteStub } from './fengariStub'
 
 export default defineConfig({
   main: {
@@ -29,8 +29,8 @@ export default defineConfig({
     },
     plugins: [vue(), fengariViteStub()],
     optimizeDeps: {
-      esbuildOptions: {
-        plugins: [fengariStubPlugin()]
+      rolldownOptions: {
+        plugins: [fengariViteStub()]
       }
     }
   }
