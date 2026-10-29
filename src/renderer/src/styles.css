@@ -195,7 +195,10 @@ input, textarea { user-select: text; }
 .context-menu.context-submenu.open-left { left: auto; right: calc(100% - 4px); }
 .menu-sep { height: 1px; margin: 4px 0; background: var(--line); }
 
-.canvas { position: absolute; inset: 0; overflow: hidden; touch-action: none; cursor: grab; background-color: #161311; background-image: radial-gradient(#3a322c 1px, transparent 1px); background-size: 22px 22px; }
+.editor-workspace { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.editor-workspace .canvas { position: relative; flex: 1; min-height: 0; inset: auto; }
+.canvas { position: absolute; inset: 0; overflow: hidden; touch-action: none; cursor: grab; background-color: #161311; background-image: radial-gradient(#3a322c 1px, transparent 1px); background-size: 16px 16px; }
+.editor-grid { position: absolute; z-index: 0; pointer-events: none; background-image: linear-gradient(to right, rgba(255, 244, 230, 0.16) 1px, transparent 1px), linear-gradient(to bottom, rgba(255, 244, 230, 0.16) 1px, transparent 1px); }
 .canvas.is-panning, .menu-stage.is-panning, .slice-stage.is-panning { cursor: grabbing; }
 .canvas-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--faint); pointer-events: none; }
 .canvas-surface, .menu-world { position: absolute; top: 0; left: 0; width: 0; height: 0; overflow: visible; }
@@ -233,6 +236,17 @@ input, textarea { user-select: text; }
 .field input, .field select, .field textarea {
   width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px;
 }
+.style-editor, .style-fold { display: flex; flex-direction: column; gap: 8px; }
+.style-code { height: 260px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; user-select: text; }
+.style-code.compact { height: 160px; }
+.style-overflow.monaco-editor {
+  position: fixed; top: 0; left: 0; width: 0; height: 0; overflow: visible; z-index: 50;
+  background: transparent; pointer-events: none;
+}
+.style-overflow.monaco-editor .suggest-widget,
+.style-overflow.monaco-editor .suggest-details { pointer-events: auto; }
+.style-error { color: #e07a72; font-size: 12px; margin: 0; }
+.style-sample { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .segmented { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .segmented button { flex: 1; border: 0; background: transparent; padding: 7px; }

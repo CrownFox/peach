@@ -3,6 +3,7 @@ import { PlaySession } from '@shared/playSession'
 import { saveFileName, storageSavePort, type SaveKind, type SavePort } from '@shared/saves'
 import type { PageDisplay } from '@shared/books'
 import type { ComponentOverride, SceneOverrides, ScriptValue } from '@shared/overrides'
+import type { AddedMap } from '@shared/spawned'
 import type { Asset } from '@shared/types'
 
 let session: PlaySession | null = null
@@ -15,8 +16,9 @@ export const usePlayStore = defineStore('play', {
     pressedId: null as string | null,
     logs: [] as { tone: 'message' | 'error'; text: string }[],
     overrides: {} as SceneOverrides,
+    added: {} as AddedMap,
     pages: {} as Record<string, PageDisplay>,
-    modals: [] as { menuId: string; overrides: SceneOverrides }[],
+    modals: [] as { menuId: string; overrides: SceneOverrides; added: AddedMap }[],
     assetsOf: (() => []) as () => Asset[],
     projectDir: null as string | null
   }),
@@ -120,8 +122,10 @@ export const usePlayStore = defineStore('play', {
         this.history = session.frames.map((frame) => frame.menuId)
         this.index = session.index
         this.logs = [...session.logs]
-        this.overrides = session.currentOverrides()
-        this.modals = session.modals.map((frame) => ({ menuId: frame.menuId, overrides: { ...frame.overrides } }))
+        const live = session
+        this.overrides = live.currentOverrides()
+        this.added = live.addedPieces()
+        this.modals = live.modals.map((frame) => ({ menuId: frame.menuId, overrides: { ...frame.overrides }, added: live.addedPieces(frame) }))
         this.pages = session.pages
       } finally {
         publishing = false

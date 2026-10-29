@@ -1,6 +1,7 @@
 import { devicePixelScale, nineSliceLayout, snapNineSlice, type SceneControl, type SceneNode } from './scene'
 import type { DisplayBlock, DisplayRun } from './books'
 import type { PageMarks } from './types'
+import { setSceneInputStyles, type InputSceneSheet } from './inputStyle'
 import { installSceneStyles } from './sceneCss'
 import type { TileStamp } from './tiles'
 
@@ -93,6 +94,7 @@ export function syncScene(
   for (const child of Array.from(container.querySelectorAll<HTMLElement>(':scope > [data-node-id]'))) {
     if (!seen.has(child.dataset.nodeId ?? '')) child.remove()
   }
+  setSceneInputStyles(container, inputSheet(nodes))
 }
 
 function placeNode(container: HTMLElement, el: HTMLElement, index: number): void {
@@ -658,9 +660,11 @@ function paintPage(
   view.style.color = node.text?.color ?? '#f4efe8'
   view.style.fontSize = base
   view.style.overflow = node.scrollable ? 'auto' : 'hidden'
+  view.dataset.inputScope = node.id
   if (!node.scrollable) view.scrollTop = 0
   const stamp = JSON.stringify(node.page)
   if (view.dataset.stamp === stamp) {
+    lockPageInputs(view, node.enabled)
     restorePageField(view, node.id, focus)
     return
   }
@@ -680,7 +684,7 @@ function paintPage(
     view.append(note)
     return
   }
-  for (const block of node.page.blocks) appendPageBlock(view, block, base, resolveUrl, node.id, onValue)
+  for (const block of node.page.blocks) appendPageBlock(view, block, base, resolveUrl, node.id, node.enabled, onValue)
   placePageField(view, key, start, end)
   if (follow && node.scrollable) view.scrollTop = view.scrollHeight
 }
@@ -704,24 +708,48 @@ function placePageField(view: HTMLElement, key: string, start: number | null, en
   if (next instanceof HTMLInputElement && start !== null && end !== null) next.setSelectionRange(start, end)
 }
 
+function lockPageInputs(view: HTMLElement, enabled: boolean): void {
+  for (const field of view.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select')) field.disabled = !enabled
+}
+
+function inputSheet(nodes: SceneNode[]): InputSceneSheet {
+  const viewers: InputSceneSheet['viewers'] = []
+  const inserts: InputSceneSheet['inserts'] = []
+  for (const node of nodes) {
+    if (node.inputStyle) viewers.push({ id: node.id, style: node.inputStyle })
+    if (!node.page) continue
+    for (const block of node.page.blocks) {
+      const paragraphs = block.type === 'conditional' ? block.blocks : [block]
+      for (const paragraph of paragraphs) {
+        for (const run of paragraph.runs) {
+          if (run.type !== 'input' || !run.style) continue
+          inserts.push({ id: run.styleId, kind: run.kind === 'dropdown' ? 'dropdown' : 'text', source: run.style })
+        }
+      }
+    }
+  }
+  return { viewers, inserts }
+}
+
 function appendPageBlock(
   parent: HTMLElement,
   block: DisplayBlock,
   base: string,
   resolveUrl: (relativePath: string) => string,
   componentId: string,
+  enabled: boolean,
   onValue?: (id: string, value: ControlValue, inputKey?: string) => void
 ): void {
   if (block.type === 'conditional') {
     const section = document.createElement('section')
     section.className = 'page-condition'
-    for (const paragraph of block.blocks) appendPageBlock(section, paragraph, base, resolveUrl, componentId, onValue)
+    for (const paragraph of block.blocks) appendPageBlock(section, paragraph, base, resolveUrl, componentId, enabled, onValue)
     parent.append(section)
     return
   }
   const paragraph = document.createElement('p')
   paragraph.style.textAlign = block.align === 'center' ? 'center' : block.align === 'end' ? 'right' : 'left'
-  for (const run of block.runs) appendPageRun(paragraph, run, base, resolveUrl, componentId, onValue)
+  for (const run of block.runs) appendPageRun(paragraph, run, base, resolveUrl, componentId, enabled, onValue)
   parent.append(paragraph)
 }
 
@@ -731,6 +759,7 @@ function appendPageRun(
   base: string,
   resolveUrl: (relativePath: string) => string,
   componentId: string,
+  enabled: boolean,
   onValue?: (id: string, value: ControlValue, inputKey?: string) => void
 ): void {
   if (run.type === 'text') {
@@ -745,6 +774,10 @@ function appendPageRun(
     const image = document.createElement('img')
     image.alt = ''
     image.src = resolveUrl(run.imagePath)
+    image.style.height = `${run.height}em`
+    image.style.width = 'auto'
+    image.style.maxWidth = '100%'
+    image.style.objectFit = 'contain'
     parent.append(image)
     return
   }
@@ -759,6 +792,8 @@ function appendPageRun(
     const select = document.createElement('select')
     select.className = 'page-drop'
     select.dataset.pageInput = run.key
+    select.dataset.inputStyle = run.styleId
+    select.disabled = !enabled
     for (const option of run.options) {
       const item = document.createElement('option')
       item.value = option
@@ -773,6 +808,8 @@ function appendPageRun(
   const input = document.createElement('input')
   input.className = 'page-input'
   input.dataset.pageInput = run.key
+  input.dataset.inputStyle = run.styleId
+  input.disabled = !enabled
   input.placeholder = run.placeholder
   input.value = run.value
   input.addEventListener('input', () => onValue?.(componentId, input.value, run.key))

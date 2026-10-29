@@ -5,8 +5,9 @@ import { canvasComponents, findComponent, placeInCanvas, type LayerPlace } from 
 import { componentScriptTemplate } from '@shared/componentScript'
 import { joinPath } from '@shared/paths'
 import { buildTree, expandFolderPath } from '@shared/tree'
-import { defaultWorkspace, GAME_PROPERTIES_WINDOW } from '@shared/workspace'
-import type { Asset, AssetType, MenuComponent, ProjectSnapshot, WorkspaceWindow } from '@shared/types'
+import { setGlobalInputStyle } from '@shared/inputStyle'
+import { defaultWorkspace, GAME_PROPERTIES_WINDOW, INPUT_STYLE_WINDOW } from '@shared/workspace'
+import type { Asset, AssetType, MenuComponent, PageInputStyle, ProjectSnapshot, WorkspaceWindow } from '@shared/types'
 import { isCanvas, isMenu } from '@shared/types'
 import { ipcError } from '@/ipcError'
 import { usePlayStore } from './play'
@@ -47,6 +48,7 @@ export const useProjectStore = defineStore('project', {
     applySnapshot(snapshot: ProjectSnapshot, resetPlay = false, openFolder?: string) {
       this.projectDir = snapshot.projectDir
       this.meta = snapshot.meta
+      setGlobalInputStyle(snapshot.meta.inputStyle)
       this.folders = snapshot.folders
       this.assets = snapshot.assets
       this.workspace =
@@ -178,16 +180,18 @@ export const useProjectStore = defineStore('project', {
         }
       })
     },
-    async updateMeta(patch: { name?: string; author?: string }) {
+    async updateMeta(patch: { name?: string; author?: string; inputStyle?: PageInputStyle }) {
       if (!this.meta) return
-      const previous = { name: this.meta.name, author: this.meta.author }
+      const previous = { name: this.meta.name, author: this.meta.author, inputStyle: this.meta.inputStyle }
       const meta = cloneData({ ...this.meta, ...patch })
       this.meta = meta
+      setGlobalInputStyle(meta.inputStyle)
       await this.run(async () => {
         try {
           await window.peach.saveMeta(this.requireDir(), meta)
         } catch (error) {
           if (this.meta) this.meta = { ...this.meta, ...previous }
+          setGlobalInputStyle(this.meta?.inputStyle)
           throw error
         }
       })
@@ -195,6 +199,11 @@ export const useProjectStore = defineStore('project', {
     openGameProperties() {
       this.ensureWindow(GAME_PROPERTIES_WINDOW, 420, 520)
       this.focusWindow(GAME_PROPERTIES_WINDOW)
+      this.setTab('editor')
+    },
+    openInputStyle() {
+      this.ensureWindow(INPUT_STYLE_WINDOW, 460, 560)
+      this.focusWindow(INPUT_STYLE_WINDOW)
       this.setTab('editor')
     },
     async importGameIcon() {
@@ -420,7 +429,8 @@ export const useProjectStore = defineStore('project', {
         return
       }
       const offset = (this.workspace.windows.length % 8) * 26
-      this.workspace.windows.push({ assetId, x: 40 + offset, y: 36 + offset, width, height, z: max + 1 })
+      const spot = this.editorPoint(40 + offset, 36 + offset)
+      this.workspace.windows.push({ assetId, x: spot.x, y: spot.y, width, height, z: max + 1 })
     },
     focusWindow(assetId: string) {
       const target = this.workspace.windows.find((window) => window.assetId === assetId)
@@ -443,6 +453,21 @@ export const useProjectStore = defineStore('project', {
       target.width = Math.max(320, Math.round(rect.width))
       target.height = Math.max(240, Math.round(rect.height))
       this.scheduleWorkspace()
+    },
+    setEditorGrid(size: number) {
+      const grid = Math.round(size)
+      if (!Number.isInteger(grid) || grid < 1) return
+      this.workspace.editorGrid = grid
+      this.scheduleWorkspace()
+    },
+    setEditorSnap(editorSnap: boolean) {
+      this.workspace.editorSnap = editorSnap
+      this.scheduleWorkspace()
+    },
+    editorPoint(x: number, y: number): { x: number; y: number } {
+      const grid = this.workspace.editorSnap ? this.workspace.editorGrid : 0
+      if (!(grid > 0)) return { x, y }
+      return { x: Math.round(x / grid) * grid, y: Math.round(y / grid) * grid }
     },
     closeWindow(assetId: string) {
       this.workspace.windows = this.workspace.windows.filter((window) => window.assetId !== assetId)

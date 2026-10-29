@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { BUILTIN_FONTS } from '@shared/fonts'
-import { isScriptHandle } from '@shared/handles'
+import { handleProblem } from '@shared/spawned'
 import type { ComponentOverride } from '@shared/overrides'
 import { assetLocation } from '@shared/paths'
 import { compositeBlocked } from '@shared/composites'
@@ -14,7 +14,7 @@ import { fileUrl } from '@/thumbs'
 import { usePlayStore } from '@/stores/play'
 import { useProjectStore } from '@/stores/project'
 import { useSessionStore } from '@/stores/session'
-import { GAME_PROPERTIES_WINDOW } from '@shared/workspace'
+import { GAME_PROPERTIES_WINDOW, INPUT_STYLE_WINDOW } from '@shared/workspace'
 import AssetSelect from './AssetSelect.vue'
 import ComponentFields from './ComponentFields.vue'
 import ScriptProperties from './ScriptProperties.vue'
@@ -289,8 +289,9 @@ function setHandle(event: Event): void {
   if (!menu.value || !selected.value) return
   const input = event.target as HTMLInputElement
   const handle = input.value.trim()
-  if (handle && !isScriptHandle(handle)) {
-    session.fail('A script id uses letters, numbers, and underscores, and cannot start with a number.')
+  const problem = handle ? handleProblem(handle) : null
+  if (problem) {
+    session.fail(problem)
     input.value = selected.value.handle
     return
   }
@@ -790,6 +791,10 @@ function patchButton(recipe: (component: ButtonComponent) => void): void {
     <template v-else-if="project.focusedWindow?.assetId === GAME_PROPERTIES_WINDOW">
       <p>Properties</p>
       <p class="tree-hint">The title, icon, and author are edited in the Properties window.</p>
+    </template>
+    <template v-else-if="project.focusedWindow?.assetId === INPUT_STYLE_WINDOW">
+      <p>Input style</p>
+      <p class="tree-hint">Page text fields and dropdowns use this style. A page viewer and a single field can add to it.</p>
     </template>
     <p v-else class="tree-hint">Open an image, button, or panel from the project tree.</p>
   </div>

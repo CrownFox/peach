@@ -1,6 +1,7 @@
 import { compositeById, fittedContent, instanceId, normalizeBox, shiftOrigin, type Box } from './composites'
 import type { SceneOverrides } from './overrides'
 import { componentSpan, readEnabled } from './runtime'
+import { canvasList, type AddedMap } from './spawned'
 import type { Asset, ColliderComponent, MenuComponent } from './types'
 
 export type WorldCollider = {
@@ -23,6 +24,7 @@ type CollectInput = {
   assets: Iterable<Asset>
   overrides: SceneOverrides
   prefix: string
+  added?: AddedMap
 }
 
 export function canvasColliders(input: CollectInput): WorldCollider[] {
@@ -39,7 +41,9 @@ export function canvasColliders(input: CollectInput): WorldCollider[] {
     false,
     input.assets,
     input.overrides,
-    found
+    found,
+    input.added,
+    true
   )
   return found
 }
@@ -86,11 +90,13 @@ function walk(
   flipY: boolean,
   assets: Iterable<Asset>,
   overrides: SceneOverrides,
-  found: WorldCollider[]
+  found: WorldCollider[],
+  added: AddedMap | undefined,
+  includeAdded: boolean
 ): void {
   const scaleX = canvasWidth > 0 ? content.width / canvasWidth : 0
   const scaleY = canvasHeight > 0 ? content.height / canvasHeight : 0
-  for (const component of components) {
+  for (const component of canvasList(components, added, parent, includeAdded)) {
     const id = instanceId(parent, component.id)
     const placed = overrides[id]
     const span = componentSpan(component, placed)
@@ -104,7 +110,7 @@ function walk(
     const drawFlipY = flipY !== span.height < 0
     if (component.type === 'zField') {
       const fieldEnabled = ancestorEnabled && readEnabled(component, placed)
-      walk(component.children, canvasWidth, canvasHeight, content, parent, stack, fieldEnabled, flipX, flipY, assets, overrides, found)
+      walk(component.children, canvasWidth, canvasHeight, content, parent, stack, fieldEnabled, flipX, flipY, assets, overrides, found, added, false)
       continue
     }
     if (component.type === 'sceneViewer') continue
@@ -130,7 +136,9 @@ function walk(
         drawFlipY,
         assets,
         overrides,
-        found
+        found,
+        added,
+        true
       )
       continue
     }

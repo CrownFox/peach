@@ -10,6 +10,7 @@ declare module 'fengari/src/lauxlib.js' {
 
 declare module 'fengari/src/fengaricore.js' {
   export function to_luastring(value: string): Uint8Array
+  export function to_jsstring(value: Uint8Array): string
 }
 
 declare module 'fengari/src/lbaselib.js' {

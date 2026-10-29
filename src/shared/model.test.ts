@@ -564,7 +564,8 @@ describe('documents', () => {
       name: 'Peach',
       author: 'Ada',
       icon: 'game-icon.png',
-      entryMenuId: 'menu'
+      entryMenuId: 'menu',
+      inputStyle: { text: '', dropdown: '' }
     })
     expect(parseMeta({ name: 'Peach' }, 'Folder')).toMatchObject({ author: '', icon: null, entryMenuId: null })
   })
@@ -668,7 +669,7 @@ describe('menu pixels', () => {
       'Main.menu.json'
     )
     if (parsed.type !== 'menu') throw new Error('expected a menu')
-    expect(parsed.components[0]).toMatchObject({ type: 'pageViewer', scrollable: true })
+    expect(parsed.components[0]).toMatchObject({ type: 'pageViewer', scrollable: true, inputStyle: { text: '', dropdown: '' } })
   })
 
   it('combines a composite color with the color of a piece inside it', () => {

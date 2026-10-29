@@ -2,12 +2,15 @@ export const FORMAT_VERSION = 2
 
 export type AssetType = 'menu' | 'button' | 'image' | 'script' | 'panel' | 'collection' | 'book' | 'composite' | 'scene' | 'tileset'
 
+export type PageInputStyle = { text: string; dropdown: string }
+
 export type ProjectMeta = {
   formatVersion: number
   name: string
   author: string
   icon: string | null
   entryMenuId: string | null
+  inputStyle: PageInputStyle
 }
 
 export type ButtonSlices = {
@@ -202,10 +205,10 @@ export type PageMarks = {
 }
 
 export type PageTextRun = { type: 'text'; text: string; marks: PageMarks }
-export type PageImageRun = { type: 'image'; id: string; imageId: string | null }
+export type PageImageRun = { type: 'image'; id: string; imageId: string | null; height?: number }
 export type PageEvaluateRun = { type: 'evaluate'; id: string; script: string }
-export type PageTextInputRun = { type: 'textInput'; id: string; key: string; placeholder: string }
-export type PageDropdownRun = { type: 'dropdown'; id: string; key: string; options: string[] }
+export type PageTextInputRun = { type: 'textInput'; id: string; key: string; placeholder: string; style: string }
+export type PageDropdownRun = { type: 'dropdown'; id: string; key: string; options: string[]; style: string }
 export type PageRun = PageTextRun | PageImageRun | PageEvaluateRun | PageTextInputRun | PageDropdownRun
 export type PageParagraph = { type: 'paragraph'; align: PageAlign; runs: PageRun[] }
 export type PageConditional = { type: 'conditional'; id: string; script: string; blocks: PageParagraph[] }
@@ -224,6 +227,7 @@ export type PageViewerComponent = ComponentBase & {
   progressive: boolean
   rate: number
   scrollable: boolean
+  inputStyle: PageInputStyle
 }
 
 export type CompositeComponent = ComponentBase & {
@@ -435,6 +439,8 @@ export type WorkspaceWindow = {
 export type Workspace = {
   expanded: string[]
   windows: WorkspaceWindow[]
+  editorGrid: number
+  editorSnap: boolean
   openMenuIds: string[]
   openCompositeIds: string[]
   openSceneIds: string[]

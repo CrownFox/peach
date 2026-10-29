@@ -1,6 +1,6 @@
 import lua from 'fengari/src/lua.js'
 import lauxlib from 'fengari/src/lauxlib.js'
-import { to_luastring } from 'fengari/src/fengaricore.js'
+import { to_jsstring, to_luastring } from 'fengari/src/fengaricore.js'
 import { luaopen_base } from 'fengari/src/lbaselib.js'
 import { luaopen_math } from 'fengari/src/lmathlib.js'
 import { luaopen_string } from 'fengari/src/lstrlib.js'
@@ -24,16 +24,17 @@ import {
 import { canvasColliders, containingPoint, overlapping, type WorldCollider } from './collisions'
 import { menuPoint, surveyPointer, type MouseTarget, type Point } from './pointer'
 import { componentSharedKeys, componentSpan, readEnabled } from './runtime'
-import { compositeById, instanceEnabled, instanceVisible, resolvePiece, scenePieceAllows, visitPieces } from './composites'
-import { directPieces, findByHandle, handleTaken } from './zField'
+import { compositeById, instanceEnabled, instanceId, instanceVisible, resolvePiece, scenePieceAllows, visitPieces } from './composites'
+import { canvasComponents, directPieces, findByHandle, findInList, handleTaken } from './zField'
 import { readComponentProperty, writeComponentProperty, type SceneOverrides, type ScriptValue } from './overrides'
 import { assetLocationOf, findAssetByLocation } from './refs'
 import { imageForTileset, indexInTileset, mapSize, paintCell, readCell, tilemapCellSize, tilesetById } from './tiles'
 import { parseSceneNodeId, parseSharedSceneId, sceneById, sharedSceneId, viewerScene } from './sceneCamera'
 import { KEYS } from './keys'
-import { type SavedOverride, type SavedValue, type SaveKind, slotNumber } from './saves'
+import { type SavedOverride, type SavedPiece, type SavedScene, type SavedScriptEnv, type SavedUpvalue, type SavedValue, type SaveKind, slotNumber } from './saves'
 import { snapshotBook, clipDisplay, decodeBookPage, displayLength, doodadScripts, findPage, inputValue, pageFieldValue, playDisplay, type LoadedBook, type PageDisplay } from './books'
 import { componentProperties, scriptPropertyNumber, type ScriptPropertyType } from './scriptProperties'
+import { binPlace, buildSpawned, canvasList, fieldBin, isSpawnKind, type AddedMap, type SpawnKind, type SpawnRequest } from './spawned'
 import type { Asset, BookPage, CompositeAsset, ImageAsset, MenuAsset, MenuComponent, PageField, SceneAsset } from './types'
 
 export type PlayFrame = {
@@ -75,6 +76,7 @@ type PersistentScene = {
   composites: Map<string, number>
   compositeFailed: Set<string>
   overrides: SceneOverrides
+  added: AddedMap
 }
 
 type CompiledMenu = {
@@ -83,6 +85,14 @@ type CompiledMenu = {
   components: Map<string, number>
   composites: Map<string, number>
   scenes: Map<string, CompiledScene>
+}
+
+type SpawnTarget = {
+  frame: PlayFrame
+  parent: string
+  field?: string
+  parentRef: number
+  stack: string[]
 }
 
 type RuntimeObject =
@@ -111,6 +121,9 @@ export class LuaHost {
   private readonly books = new Map<number, LoadedBook>()
   private readonly compiled = new Map<PlayFrame, CompiledMenu>()
   private readonly persistent = new Map<string, PersistentScene>()
+  private readonly added = new Map<PlayFrame, AddedMap>()
+  private readonly restored = new Map<string, SavedScene>()
+  private sceneReady = false
   private readonly pageMethods = new Map<PlayFrame, Map<string, number>>()
   private readonly keys = new Map<PlayFrame, Map<string, { down?: number; up?: number }>>()
   private readonly held = new Set<string>()
@@ -165,6 +178,7 @@ export class LuaHost {
     for (const ref of compiled.composites.values()) this.unref(ref)
     for (const scene of compiled.scenes.values()) this.unref(scene.envRef)
     this.compiled.delete(frame)
+    this.added.delete(frame)
   }
 
   presentModal(frame: PlayFrame, runOnLoad: boolean): void {
@@ -184,7 +198,7 @@ export class LuaHost {
     if (this.clicking.has(componentId)) return
     const menu = this.menu(frame.menuId)
     const target = this.activationTarget(frame, componentId)
-    const component = menu && target ? resolvePiece(menu, this.hooks.assets(), target.id)?.component : null
+    const component = menu && target ? resolvePiece(menu, this.hooks.assets(), target.id, this.added.get(frame))?.component : null
     if (!menu || !target || !component) return
     if (!target.allowed) return
     if (component.type !== 'button' && component.type !== 'image') return
@@ -209,7 +223,7 @@ export class LuaHost {
     if (this.changing.has(componentId)) return
     if (!this.activationTarget(frame, componentId)?.allowed) return
     const menu = this.menu(frame.menuId)
-    const component = menu ? resolvePiece(menu, this.hooks.assets(), componentId)?.component : null
+    const component = menu ? resolvePiece(menu, this.hooks.assets(), componentId, this.added.get(frame))?.component : null
     if (!menu || !component) return
     this.prepare(frame, false)
     const env = this.compiled.get(frame)?.components.get(componentId)
@@ -226,6 +240,7 @@ export class LuaHost {
   private prepare(frame: PlayFrame, runOnLoad: boolean): void {
     const menu = this.menu(frame.menuId)
     if (!menu) return
+    this.sceneReady = false
     const modal = this.modalFrames.has(frame)
     if (modal) this.setCurrentModal({ kind: 'menu', frame })
     else this.setCurrentMenu({ kind: 'menu', frame })
@@ -239,6 +254,8 @@ export class LuaHost {
       this.adoptPersistent(frame, menu)
     }
     this.refreshProperties(frame)
+    this.sceneReady = true
+    this.restoreSceneState(frame)
     if (!runOnLoad) {
       this.runSceneShows(frame)
       return
@@ -297,10 +314,11 @@ export class LuaHost {
     }
   }
 
-  private runCompositeLoads(frame: PlayFrame, components: MenuComponent[], parent: string, stack: string[]): void {
+  private runCompositeLoads(frame: PlayFrame, components: MenuComponent[], parent: string, stack: string[], includeAdded = true): void {
     const compiled = this.compiled.get(frame)
     if (!compiled) return
-    for (const component of directPieces(components)) {
+    const list = directPieces(canvasList(components, this.added.get(frame), parent, includeAdded))
+    for (const component of list) {
       if (component.type !== 'composite' || !component.compositeId || stack.includes(component.compositeId)) continue
       const asset = compositeById(this.hooks.assets(), component.compositeId)
       if (!asset) continue
@@ -313,10 +331,11 @@ export class LuaHost {
     }
   }
 
-  private runCompositeShows(frame: PlayFrame, components: MenuComponent[], parent: string, stack: string[]): void {
+  private runCompositeShows(frame: PlayFrame, components: MenuComponent[], parent: string, stack: string[], includeAdded = true): void {
     const compiled = this.compiled.get(frame)
     if (!compiled) return
-    for (const component of directPieces(components)) {
+    const list = directPieces(canvasList(components, this.added.get(frame), parent, includeAdded))
+    for (const component of list) {
       if (component.type !== 'composite' || !component.compositeId || stack.includes(component.compositeId)) continue
       const asset = compositeById(this.hooks.assets(), component.compositeId)
       if (!asset) continue
@@ -552,10 +571,11 @@ export class LuaHost {
     }
   }
 
-  private runCompositeUpdates(frame: PlayFrame, components: MenuComponent[], parent: string, stack: string[], dt: number): void {
+  private runCompositeUpdates(frame: PlayFrame, components: MenuComponent[], parent: string, stack: string[], dt: number, includeAdded = true): void {
     const compiled = this.compiled.get(frame)
     if (!compiled) return
-    for (const component of directPieces(components)) {
+    const list = directPieces(canvasList(components, this.added.get(frame), parent, includeAdded))
+    for (const component of list) {
       if (component.type !== 'composite' || !component.compositeId || stack.includes(component.compositeId)) continue
       const asset = compositeById(this.hooks.assets(), component.compositeId)
       if (!asset) continue
@@ -618,34 +638,37 @@ export class LuaHost {
     if (!menu) return null
     const parsed = parseSceneNodeId(componentId)
     if (parsed) {
-      const viewer = resolvePiece(menu, this.hooks.assets(), parsed.viewerId)
+      const viewer = resolvePiece(menu, this.hooks.assets(), parsed.viewerId, this.added.get(frame))
       if (viewer?.component.type !== 'sceneViewer') return null
       const scene = viewerScene(viewer.component, frame.overrides[parsed.viewerId], this.hooks.assets())
       if (!scene) return null
+      const added = this.added.get(frame)
       return {
         id: sharedSceneId(scene.id, parsed.localId),
         allowed:
-          instanceVisible(menu, this.hooks.assets(), parsed.viewerId, frame.overrides) &&
-          instanceEnabled(menu, this.hooks.assets(), parsed.viewerId, frame.overrides) &&
-          scenePieceAllows(this.hooks.assets(), scene.id, parsed.localId, frame.overrides, 'visible') &&
-          scenePieceAllows(this.hooks.assets(), scene.id, parsed.localId, frame.overrides, 'enabled')
+          instanceVisible(menu, this.hooks.assets(), parsed.viewerId, frame.overrides, added) &&
+          instanceEnabled(menu, this.hooks.assets(), parsed.viewerId, frame.overrides, added) &&
+          scenePieceAllows(this.hooks.assets(), scene.id, parsed.localId, frame.overrides, 'visible', added) &&
+          scenePieceAllows(this.hooks.assets(), scene.id, parsed.localId, frame.overrides, 'enabled', added)
       }
     }
     const shared = parseSharedSceneId(componentId)
     if (shared) {
+      const added = this.added.get(frame)
       return {
         id: componentId,
         allowed:
           this.sceneShown(frame, shared.sceneId) &&
-          scenePieceAllows(this.hooks.assets(), shared.sceneId, shared.localId, frame.overrides, 'visible') &&
-          scenePieceAllows(this.hooks.assets(), shared.sceneId, shared.localId, frame.overrides, 'enabled')
+          scenePieceAllows(this.hooks.assets(), shared.sceneId, shared.localId, frame.overrides, 'visible', added) &&
+          scenePieceAllows(this.hooks.assets(), shared.sceneId, shared.localId, frame.overrides, 'enabled', added)
       }
     }
+    const added = this.added.get(frame)
     return {
       id: componentId,
       allowed:
-        instanceEnabled(menu, this.hooks.assets(), componentId, frame.overrides) &&
-        instanceVisible(menu, this.hooks.assets(), componentId, frame.overrides)
+        instanceEnabled(menu, this.hooks.assets(), componentId, frame.overrides, added) &&
+        instanceVisible(menu, this.hooks.assets(), componentId, frame.overrides, added)
     }
   }
 
@@ -657,8 +680,8 @@ export class LuaHost {
       if (shown || piece.component.type !== 'sceneViewer') return
       const scene = viewerScene(piece.component, frame.overrides[piece.instanceId], this.hooks.assets())
       if (scene?.id !== sceneId) return
-      if (instanceVisible(menu, this.hooks.assets(), piece.instanceId, frame.overrides)) shown = true
-    })
+      if (instanceVisible(menu, this.hooks.assets(), piece.instanceId, frame.overrides, this.added.get(frame))) shown = true
+    }, this.added.get(frame))
     return shown
   }
 
@@ -667,28 +690,34 @@ export class LuaHost {
       if (piece.component.type !== 'sceneViewer') return
       const scene = sceneById(this.hooks.assets(), piece.component.sceneId)
       if (scene) this.ensureScene(frame, scene)
-    })
+    }, this.added.get(frame))
   }
 
   private ensureScene(frame: PlayFrame, scene: SceneAsset): boolean {
     const compiled = this.compiled.get(frame)
     if (!compiled || compiled.scenes.has(scene.id)) return false
+    const stamp = this.sceneRuntimeStamp(scene)
     if (scene.persistent) {
       const kept = this.persistent.get(scene.id)
-      const stamp = this.sceneRuntimeStamp(scene)
       if (kept && kept.stamp === stamp) {
         this.installPersistent(frame, scene, kept)
         return false
       }
       if (kept) this.dropPersistent(scene.id)
     }
-    const stamp = this.sceneRuntimeStamp(scene)
+    const pending = scene.persistent ? this.restored.get(scene.id) : undefined
+    const restoring = pending?.stamp === stamp
+    if (pending && !restoring) this.restored.delete(scene.id)
     const env = this.newEnv(compiled.menuRef)
-    compiled.scenes.set(scene.id, { envRef: env, failed: false, loaded: false, stamp })
+    compiled.scenes.set(scene.id, { envRef: env, failed: false, loaded: restoring, stamp })
     this.setSelf(env, { kind: 'scene', frame, sceneId: scene.id })
     this.runSources(env, sourceFor(this.hooks.assets(), scene.scriptId), scene.script, scene.name)
     this.compilePieces(frame, scene.components, env, `scene:${scene.id}`, [scene.id], compiled.components, compiled.composites)
-    return true
+    if (restoring && pending && this.sceneReady) {
+      this.applyRestoredScene(frame, scene.id, pending)
+      this.restored.delete(scene.id)
+    }
+    return !restoring
   }
 
   private runSceneLoads(frame: PlayFrame): void {
@@ -749,7 +778,8 @@ export class LuaHost {
         components,
         composites,
         compositeFailed,
-        overrides
+        overrides,
+        added: this.takeSceneAdded(frame, sceneId)
       })
       compiled.scenes.delete(sceneId)
     }
@@ -757,6 +787,213 @@ export class LuaHost {
 
   forgetPersistent(): void {
     for (const sceneId of [...this.persistent.keys()]) this.dropPersistent(sceneId)
+    this.restored.clear()
+  }
+
+  capturePersistent(frames: PlayFrame[]): SavedScene[] {
+    const top = lua.lua_gettop(this.state)
+    try {
+      const saved: SavedScene[] = []
+      const seen = new Set<string>()
+      const take = (
+        sceneId: string,
+        runtime: { envRef: number; failed: boolean; stamp: string },
+        components: Map<string, number>,
+        composites: Map<string, number>,
+        compositeFailed: Iterable<string>,
+        overrides: SceneOverrides,
+        added: AddedMap
+      ): void => {
+        if (seen.has(sceneId)) return
+        const scene = sceneById(this.hooks.assets(), sceneId)
+        const location = assetLocationOf(this.hooks.assets(), sceneId)
+        if (!scene?.persistent || !location) return
+        seen.add(sceneId)
+        saved.push(this.captureScene(scene, location, runtime, components, composites, compositeFailed, overrides, added))
+      }
+      const active = this.modalFrame && this.compiled.has(this.modalFrame) ? this.modalFrame : null
+      for (const frame of [...(active ? [...frames, active] : frames)].reverse()) {
+        const compiled = this.compiled.get(frame)
+        if (!compiled) continue
+        for (const [sceneId, runtime] of compiled.scenes) {
+          take(sceneId, runtime, compiled.components, compiled.composites, this.compositeFailed.get(frame) ?? [], frame.overrides, this.added.get(frame) ?? {})
+        }
+      }
+      for (const [sceneId, kept] of this.persistent) {
+        take(sceneId, kept, kept.components, kept.composites, kept.compositeFailed, kept.overrides, kept.added)
+      }
+      return saved
+    } finally {
+      lua.lua_settop(this.state, top)
+    }
+  }
+
+  restorePersistent(scenes: SavedScene[] | undefined): void {
+    this.restored.clear()
+    if (!Array.isArray(scenes)) return
+    for (const saved of scenes) {
+      if (!saved || typeof saved.scene !== 'string' || typeof saved.stamp !== 'string') continue
+      const asset = findAssetByLocation(this.hooks.assets(), saved.scene, 'scene')
+      if (!asset || asset.type !== 'scene' || !asset.persistent) continue
+      this.restored.set(asset.id, saved)
+    }
+  }
+
+  private captureScene(
+    scene: SceneAsset,
+    location: string,
+    runtime: { envRef: number; failed: boolean; stamp: string },
+    components: Map<string, number>,
+    composites: Map<string, number>,
+    compositeFailed: Iterable<string>,
+    overrides: SceneOverrides,
+    added: AddedMap
+  ): SavedScene {
+    const prefix = `scene:${scene.id}/`
+    const picked: SceneOverrides = {}
+    for (const [key, value] of Object.entries(overrides)) {
+      if (key.startsWith(prefix)) picked[key] = value
+    }
+    const componentEnvs: Record<string, SavedScriptEnv> = {}
+    for (const [id, ref] of components) {
+      if (id.startsWith(prefix)) componentEnvs[id] = this.captureScriptEnv(ref, scene.name)
+    }
+    const compositeEnvs: Record<string, SavedScriptEnv> = {}
+    for (const [id, ref] of composites) {
+      if (id.startsWith(prefix)) compositeEnvs[id] = this.captureScriptEnv(ref, scene.name)
+    }
+    const pieces = savedPieces(scene.id, added)
+    return {
+      scene: location,
+      stamp: runtime.stamp,
+      failed: runtime.failed,
+      overrides: this.captureOverrides(picked),
+      env: this.captureScriptEnv(runtime.envRef, scene.name),
+      components: componentEnvs,
+      composites: compositeEnvs,
+      compositeFailed: [...compositeFailed].filter((id) => id.startsWith(prefix)),
+      ...(pieces.length ? { added: pieces } : {})
+    }
+  }
+
+  private captureScriptEnv(envRef: number, label: string): SavedScriptEnv {
+    this.pushRef(envRef)
+    const envIndex = lua.lua_absindex(this.state, -1)
+    const values = this.readSaved(envIndex, new Set(), label)
+    const upvalues: Record<string, SavedUpvalue[]> = {}
+    lua.lua_pushnil(this.state)
+    while (lua.lua_next(this.state, envIndex) !== 0) {
+      if (lua.lua_type(this.state, -2) === lua.LUA_TSTRING && lua.lua_isfunction(this.state, -1)) {
+        const name = lua.lua_tojsstring(this.state, -2)
+        if (typeof name === 'string' && name !== 'self') upvalues[name] = this.captureUpvalues(-1, label)
+      }
+      lua.lua_pop(this.state, 1)
+    }
+    lua.lua_pop(this.state, 1)
+    return { values: values === omitted || values === null || Array.isArray(values) ? {} : values, upvalues }
+  }
+
+  private captureUpvalues(funcIndex: number, label: string): SavedUpvalue[] {
+    const abs = lua.lua_absindex(this.state, funcIndex)
+    const saved: SavedUpvalue[] = []
+    for (let index = 1; ; index += 1) {
+      const nameBytes = lua.lua_getupvalue(this.state, abs, index) as unknown
+      if (nameBytes == null) break
+      const name = to_jsstring(nameBytes as never)
+      if (name === '_ENV') {
+        lua.lua_pop(this.state, 1)
+        saved.push({ name, skip: true, value: null })
+        continue
+      }
+      const value = this.readSaved(-1, new Set(), label)
+      lua.lua_pop(this.state, 1)
+      if (value === omitted) saved.push({ name, skip: true, value: null })
+      else saved.push({ name, skip: false, value })
+    }
+    return saved
+  }
+
+  private restoreSceneState(frame: PlayFrame): void {
+    const compiled = this.compiled.get(frame)
+    if (!compiled) return
+    for (const sceneId of [...compiled.scenes.keys()]) {
+      const pending = this.restored.get(sceneId)
+      const runtime = compiled.scenes.get(sceneId)
+      if (!pending || !runtime || pending.stamp !== runtime.stamp) continue
+      this.applyRestoredScene(frame, sceneId, pending)
+      this.restored.delete(sceneId)
+    }
+  }
+
+  private applyRestoredScene(frame: PlayFrame, sceneId: string, saved: SavedScene): void {
+    const compiled = this.compiled.get(frame)
+    const runtime = compiled?.scenes.get(sceneId)
+    if (!compiled || !runtime) return
+    const top = lua.lua_gettop(this.state)
+    try {
+      this.restoreAdded(frame, saved.added)
+      runtime.failed = saved.failed === true
+      this.restoreScriptEnv(runtime.envRef, saved.env)
+      for (const [id, env] of Object.entries(saved.components ?? {})) {
+        const ref = compiled.components.get(id)
+        if (ref !== undefined) this.restoreScriptEnv(ref, env)
+      }
+      for (const [id, env] of Object.entries(saved.composites ?? {})) {
+        const ref = compiled.composites.get(id)
+        if (ref !== undefined) this.restoreScriptEnv(ref, env)
+      }
+      if (saved.compositeFailed?.length) {
+        const failed = this.compositeFailed.get(frame) ?? new Set<string>()
+        for (const id of saved.compositeFailed) failed.add(id)
+        this.compositeFailed.set(frame, failed)
+      }
+      const prefix = `scene:${sceneId}/`
+      for (const [key, value] of Object.entries(this.restoreOverrides(saved.overrides ?? {}))) {
+        if (key.startsWith(prefix)) frame.overrides[key] = value
+      }
+    } finally {
+      lua.lua_settop(this.state, top)
+    }
+  }
+
+  private restoreScriptEnv(envRef: number, saved: SavedScriptEnv | undefined): void {
+    if (!saved || typeof saved !== 'object') return
+    this.pushRef(envRef)
+    const envIndex = lua.lua_absindex(this.state, -1)
+    const values = saved.values
+    if (values && typeof values === 'object' && !Array.isArray(values) && !('$' in values)) {
+      for (const [key, value] of Object.entries(values)) {
+        if (key === 'self') continue
+        this.pushSaved(value)
+        lua.lua_setfield(this.state, envIndex, S(key))
+      }
+    }
+    const done = new Set<unknown>()
+    for (const [name, ups] of Object.entries(saved.upvalues ?? {})) {
+      if (!Array.isArray(ups)) continue
+      lua.lua_getfield(this.state, envIndex, S(name))
+      if (!lua.lua_isfunction(this.state, -1)) {
+        lua.lua_pop(this.state, 1)
+        continue
+      }
+      const funcIndex = lua.lua_absindex(this.state, -1)
+      ups.forEach((up, position) => {
+        if (!up || typeof up.name !== 'string') return
+        const index = position + 1
+        const nameBytes = lua.lua_getupvalue(this.state, funcIndex, index) as unknown
+        if (nameBytes == null) return
+        const actual = to_jsstring(nameBytes as never)
+        lua.lua_pop(this.state, 1)
+        const id = lua.lua_upvalueid(this.state, funcIndex, index) as unknown
+        if (done.has(id)) return
+        done.add(id)
+        if (up.skip || actual !== up.name) return
+        this.pushSaved(up.value ?? null)
+        lua.lua_setupvalue(this.state, funcIndex, index)
+      })
+      lua.lua_pop(this.state, 1)
+    }
+    lua.lua_pop(this.state, 1)
   }
 
   private adoptPersistent(frame: PlayFrame, menu: MenuAsset): void {
@@ -764,7 +1001,7 @@ export class LuaHost {
       if (piece.component.type !== 'sceneViewer') return
       const scene = viewerScene(piece.component, frame.overrides[piece.instanceId], this.hooks.assets())
       if (scene?.persistent) this.ensureScene(frame, scene)
-    })
+    }, this.added.get(frame))
   }
 
   private installPersistent(frame: PlayFrame, scene: SceneAsset, kept: PersistentScene): void {
@@ -782,6 +1019,8 @@ export class LuaHost {
     for (const [key, value] of Object.entries(kept.overrides)) {
       if (key.startsWith(prefix)) frame.overrides[key] = JSON.parse(JSON.stringify(value)) as SceneOverrides[string]
     }
+    const map = this.addedOf(frame)
+    for (const [key, list] of Object.entries(kept.added)) map[key] = list
     this.retargetEnv(kept.envRef, compiled.menuRef)
     this.setSelf(kept.envRef, { kind: 'scene', frame, sceneId: scene.id })
   }
@@ -1293,7 +1532,7 @@ export class LuaHost {
     visitPieces(menu, this.hooks.assets(), ({ instanceId, component }) => {
       if (component.type !== 'pageViewer') return
       pages[instanceId] = this.displayViewer(frame, instanceId, component)
-    })
+    }, this.added.get(frame))
     return pages
   }
 
@@ -1671,22 +1910,24 @@ export class LuaHost {
       height: menu.height,
       assets: this.hooks.assets(),
       overrides: frame.overrides,
-      prefix: ''
+      prefix: '',
+      added: this.added.get(frame)
     })
   }
 
-  private compositeColliders(frame: PlayFrame, instanceId: string): WorldCollider[] {
-    const asset = this.compositeAsset(frame, instanceId)
+  private compositeColliders(frame: PlayFrame, id: string): WorldCollider[] {
+    const asset = this.compositeAsset(frame, id)
     const menu = this.menu(frame.menuId)
-    const piece = menu ? resolvePiece(menu, this.hooks.assets(), instanceId) : null
-    if (!asset || (piece && !readEnabled(piece.component, frame.overrides[instanceId]))) return []
+    const piece = menu ? resolvePiece(menu, this.hooks.assets(), id, this.added.get(frame)) : null
+    if (!asset || (piece && !readEnabled(piece.component, frame.overrides[id]))) return []
     return canvasColliders({
       components: asset.components,
       width: asset.width,
       height: asset.height,
       assets: this.hooks.assets(),
       overrides: frame.overrides,
-      prefix: instanceId
+      prefix: id,
+      added: this.added.get(frame)
     })
   }
 
@@ -1699,7 +1940,8 @@ export class LuaHost {
       height: scene.height,
       assets: this.hooks.assets(),
       overrides: frame.overrides,
-      prefix: `scene:${scene.id}`
+      prefix: `scene:${scene.id}`,
+      added: this.added.get(frame)
     })
   }
 
@@ -2232,6 +2474,7 @@ export class LuaHost {
       return 1
     }
     if (object.kind === 'menu') {
+      if (key === 'new') return this.pushConstructors(L)
       const component = this.componentByHandle(object.frame, key)
       if (component) {
         this.pushPiece(object.frame, component.id, component)
@@ -2251,20 +2494,22 @@ export class LuaHost {
       return 1
     }
     if (object.kind === 'composite') {
+      if (key === 'new') return this.pushConstructors(L)
       const asset = this.compositeAsset(object.frame, object.instanceId)
-      const child = key && asset ? findByHandle(asset.components, key) : undefined
+      const child = key && asset ? findByHandle(canvasList(asset.components, this.added.get(object.frame), object.instanceId, true), key) : undefined
       if (child) {
         this.pushPiece(object.frame, `${object.instanceId}/${child.id}`, child)
         return 1
       }
       const menu = this.menu(object.frame.menuId)
-      const piece = menu ? resolvePiece(menu, this.hooks.assets(), object.instanceId) : null
+      const piece = menu ? resolvePiece(menu, this.hooks.assets(), object.instanceId, this.added.get(object.frame)) : null
       if (!piece) {
         lua.lua_pushnil(L)
         return 1
       }
       if (key === 'collisionAt') return this.pushBound(L, (state) => this.collisionAt(state))
       if (key === 'getMousePosition') return this.pushBound(L, (state) => this.canvasMouse(state))
+      if (key === 'remove') return this.pushBound(L, (state) => this.removePiece(state))
       if (componentSharedKeys.has(key)) {
         this.pushValue(L, readComponentProperty(piece.component, object.frame.overrides[object.instanceId], this.hooks.assets(), key))
         return 1
@@ -2275,8 +2520,9 @@ export class LuaHost {
       return 1
     }
     if (object.kind === 'scene') {
+      if (key === 'new') return this.pushConstructors(L)
       const scene = sceneById(this.hooks.assets(), object.sceneId)
-      const child = key && scene ? findByHandle(scene.components, key) : undefined
+      const child = key && scene ? findByHandle(canvasList(scene.components, this.added.get(object.frame), `scene:${object.sceneId}`, true), key) : undefined
       if (child && scene) {
         this.pushPiece(object.frame, sharedSceneId(scene.id, child.id), child)
         return 1
@@ -2293,6 +2539,7 @@ export class LuaHost {
       lua.lua_pushnil(L)
       return 1
     }
+    if (key === 'remove') return this.pushBound(L, (state) => this.removePiece(state))
     if (key === 'click') {
       const clicked = this.component(object)
       if (clicked?.type !== 'button' && clicked?.type !== 'image') {
@@ -2308,9 +2555,11 @@ export class LuaHost {
       lua.lua_pushnil(L)
       return 1
     }
+    if (component.type === 'zField' && key === 'new') return this.pushConstructors(L)
     if (component.type === 'sceneViewer') {
+      if (key === 'new') return this.pushConstructors(L)
       const scene = viewerScene(component, object.frame.overrides[object.componentId], this.hooks.assets())
-      const child = key && scene ? findByHandle(scene.components, key) : undefined
+      const child = key && scene ? findByHandle(canvasList(scene.components, this.added.get(object.frame), `scene:${scene.id}`, true), key) : undefined
       if (child && scene) {
         this.pushPiece(object.frame, sharedSceneId(scene.id, child.id), child)
         return 1
@@ -2368,13 +2617,14 @@ export class LuaHost {
     const key = lua.lua_type(L, 2) === lua.LUA_TSTRING ? lua.lua_tojsstring(L, 2) : ''
     if (!object || typeof key !== 'string') return this.fail(L, 'That value cannot be changed from a script.')
     if (object.kind === 'composite') {
+      if (key === 'new') return this.fail(L, 'new cannot be changed.')
       const asset = this.compositeAsset(object.frame, object.instanceId)
-      if (key && asset && handleTaken(asset.components, key, '')) return this.fail(L, 'That value cannot be changed from a script.')
+      if (key && asset && handleTaken(canvasList(asset.components, this.added.get(object.frame), object.instanceId, true), key, '')) return this.fail(L, 'That value cannot be changed from a script.')
       if (componentSharedKeys.has(key)) {
         try {
           const menu = this.menu(object.frame.menuId)
           if (!menu) throw new Error('That menu is no longer open.')
-          writeComponentProperty(menu, object.instanceId, object.frame.overrides, key, this.readValue(L, 3), this.hooks.assets())
+          writeComponentProperty(menu, object.instanceId, object.frame.overrides, key, this.readValue(L, 3), this.hooks.assets(), this.added.get(object.frame))
           this.hooks.changed()
         } catch (error) {
           return this.fail(L, error instanceof Error ? error.message : 'Could not update that value.')
@@ -2390,17 +2640,21 @@ export class LuaHost {
       return 0
     }
     if (object.kind === 'menu') {
+      if (key === 'new') return this.fail(L, 'new cannot be changed.')
       if (key === 'type' || key === 'name' || key === 'width' || key === 'height' || key === 'collisionAt') {
         return this.fail(L, `${key} cannot be changed.`)
       }
       return this.fail(L, 'That value cannot be changed from a script.')
     }
     if (object.kind === 'scene') {
+      if (key === 'new') return this.fail(L, 'new cannot be changed.')
       const scene = sceneById(this.hooks.assets(), object.sceneId)
       if (key === 'type' || key === 'name' || key === 'width' || key === 'height' || key === 'collisionAt') {
         return this.fail(L, `${key} cannot be changed.`)
       }
-      if (key && scene && handleTaken(scene.components, key, '')) return this.fail(L, 'That value cannot be changed from a script.')
+      if (key && scene && handleTaken(canvasList(scene.components, this.added.get(object.frame), `scene:${object.sceneId}`, true), key, '')) {
+        return this.fail(L, 'That value cannot be changed from a script.')
+      }
       const env = this.compiled.get(object.frame)?.scenes.get(object.sceneId)?.envRef
       if (env === undefined) return this.fail(L, 'That value cannot be changed from a script.')
       this.pushRef(env)
@@ -2421,9 +2675,12 @@ export class LuaHost {
       if (!menu) throw new Error('That menu is no longer open.')
       if (component?.type === 'sceneViewer' && key) {
         const viewed = viewerScene(component, object.frame.overrides[object.componentId], this.hooks.assets())
-        if (viewed && handleTaken(viewed.components, key, '')) return this.fail(L, 'That value cannot be changed from a script.')
+        if (viewed && handleTaken(canvasList(viewed.components, this.added.get(object.frame), `scene:${viewed.id}`, true), key, '')) {
+          return this.fail(L, 'That value cannot be changed from a script.')
+        }
       }
-      writeComponentProperty(menu, object.componentId, object.frame.overrides, key, this.readValue(L, 3), this.hooks.assets())
+      if (key === 'new') return this.fail(L, 'new cannot be changed.')
+      writeComponentProperty(menu, object.componentId, object.frame.overrides, key, this.readValue(L, 3), this.hooks.assets(), this.added.get(object.frame))
       if (component?.type === 'pageViewer' && key === 'progressive') this.syncProgressive(object.frame, object.componentId)
       this.hooks.changed()
       if (component?.type === 'pageViewer' && (key === 'book' || key === 'page')) this.runPageLoad(object.frame, object.componentId)
@@ -2450,7 +2707,7 @@ export class LuaHost {
     if (object.kind === 'menu') return this.pushPoint(L, here)
     const menu = this.menu(object.frame.menuId)
     if (!menu) return this.pushPoint(L, null)
-    const survey = surveyPointer(menu, this.hooks.assets(), object.frame.overrides, here, this.displayScale)
+    const survey = surveyPointer(menu, this.hooks.assets(), object.frame.overrides, here, this.displayScale, this.added.get(object.frame))
     if (object.kind === 'composite') return this.pushPoint(L, survey.compositePoint.get(object.instanceId) ?? null)
     return this.pushPoint(L, survey.scenePoint.get(object.sceneId) ?? null)
   }
@@ -2559,7 +2816,7 @@ export class LuaHost {
     if (!menu) return
     visitPieces(menu, this.hooks.assets(), ({ instanceId, component }) => {
       if (component.type === 'pageViewer') this.runPageLoad(frame, instanceId)
-    })
+    }, this.added.get(frame))
   }
 
   private runPageLoad(frame: PlayFrame, componentId: string): void {
@@ -2813,12 +3070,12 @@ export class LuaHost {
   private component(object: { frame: PlayFrame; componentId: string }): MenuComponent | null {
     const menu = this.menu(object.frame.menuId)
     if (!menu) return null
-    return resolvePiece(menu, this.hooks.assets(), object.componentId)?.component ?? null
+    return resolvePiece(menu, this.hooks.assets(), object.componentId, this.added.get(object.frame))?.component ?? null
   }
 
   private compositeAsset(frame: PlayFrame, id: string): CompositeAsset | null {
     const menu = this.menu(frame.menuId)
-    const piece = menu ? resolvePiece(menu, this.hooks.assets(), id) : null
+    const piece = menu ? resolvePiece(menu, this.hooks.assets(), id, this.added.get(frame)) : null
     if (piece?.component.type !== 'composite') return null
     return compositeById(this.hooks.assets(), piece.component.compositeId)
   }
@@ -2834,11 +3091,307 @@ export class LuaHost {
     else this.pushProxy({ kind: 'component', frame, componentId: id })
   }
 
+  addedFor(frame: PlayFrame): AddedMap {
+    const live = this.added.get(frame)
+    if (!live) return {}
+    const copy: AddedMap = {}
+    for (const [key, list] of Object.entries(live)) copy[key] = list.slice()
+    return copy
+  }
+
+  private addedOf(frame: PlayFrame): AddedMap {
+    let map = this.added.get(frame)
+    if (!map) {
+      map = {}
+      this.added.set(frame, map)
+    }
+    return map
+  }
+
+  private takeSceneAdded(frame: PlayFrame, sceneId: string): AddedMap {
+    const map = this.added.get(frame)
+    if (!map) return {}
+    const prefix = `scene:${sceneId}`
+    const moved: AddedMap = {}
+    for (const key of Object.keys(map)) {
+      if (key !== prefix && !key.startsWith(`${prefix}/`)) continue
+      const list = map[key]
+      if (!list) continue
+      moved[key] = list
+      delete map[key]
+    }
+    return moved
+  }
+
+  private pushConstructors(L: unknown): number {
+    const id = lua.lua_tointeger(L, lua.lua_upvalueindex(1))
+    lua.lua_newtable(L)
+    for (const kind of ['composite', 'image', 'button', 'panel', 'scene', 'label', 'text', 'collider'] as const) {
+      lua.lua_pushinteger(L, id)
+      lua.lua_pushstring(L, S(kind))
+      lua.lua_pushcclosure(L, (state: unknown) => this.spawnCall(state), 2)
+      lua.lua_setfield(L, -2, S(kind))
+    }
+    return 1
+  }
+
+  private spawnCall(L: unknown): number {
+    const object = this.objects.get(lua.lua_tointeger(L, lua.lua_upvalueindex(1)))
+    const kindName = lua.lua_tojsstring(L, lua.lua_upvalueindex(2))
+    if (!object || typeof kindName !== 'string' || !isSpawnKind(kindName)) return this.fail(L, 'That component cannot be added.')
+    try {
+      const target = this.spawnTarget(object)
+      const component = buildSpawned(kindName, this.spawnRequest(L, kindName), this.spawnSiblings(target), this.hooks.assets())
+      if (component.type === 'composite' && component.compositeId && target.stack.includes(component.compositeId)) {
+        throw new Error('That composite is already inside itself.')
+      }
+      if (target.field) component.z = 0
+      this.adopt(target.frame, this.storageKey(target), component)
+      this.compileSpawned(target, component, true)
+      this.hooks.changed()
+      this.pushPiece(target.frame, instanceId(target.parent, component.id), component)
+      return 1
+    } catch (error) {
+      return this.fail(L, error instanceof Error ? error.message : 'Could not add that component.')
+    }
+  }
+
+  private spawnRequest(L: unknown, kind: SpawnKind): SpawnRequest {
+    const first = this.optionalText(L, 1)
+    const second = this.optionalText(L, 2)
+    if (kind === 'label' || kind === 'text') return { text: first, handle: second }
+    if (kind === 'collider') return { shape: first, handle: second }
+    return { path: first, handle: second }
+  }
+
+  private optionalText(L: unknown, index: number): string | null {
+    const type = lua.lua_type(L, index)
+    if (type === lua.LUA_TNONE || type === lua.LUA_TNIL) return null
+    if (type !== lua.LUA_TSTRING) throw new Error('That argument expects text.')
+    const text = lua.lua_tojsstring(L, index)
+    return typeof text === 'string' ? text : null
+  }
+
+  private spawnTarget(object: RuntimeObject): SpawnTarget {
+    if (object.kind === 'menu') {
+      const compiled = this.compiled.get(object.frame)
+      if (!compiled) throw new Error('That menu is no longer open.')
+      return { frame: object.frame, parent: '', parentRef: compiled.menuRef, stack: [] }
+    }
+    if (object.kind === 'scene') {
+      const env = this.compiled.get(object.frame)?.scenes.get(object.sceneId)?.envRef
+      if (env === undefined) throw new Error('That scene is no longer open.')
+      const parent = `scene:${object.sceneId}`
+      return { frame: object.frame, parent, parentRef: env, stack: this.assetStack(object.frame, parent) }
+    }
+    if (object.kind === 'composite') {
+      const env = this.compiled.get(object.frame)?.composites.get(object.instanceId)
+      if (env === undefined) throw new Error('That composite is no longer open.')
+      return { frame: object.frame, parent: object.instanceId, parentRef: env, stack: this.assetStack(object.frame, object.instanceId) }
+    }
+    if (object.kind === 'component') {
+      const component = this.component(object)
+      if (component?.type === 'zField') {
+        const slash = object.componentId.lastIndexOf('/')
+        const parent = slash >= 0 ? object.componentId.slice(0, slash) : ''
+        const field = slash >= 0 ? object.componentId.slice(slash + 1) : object.componentId
+        const env = this.envForParent(object.frame, parent)
+        if (env === undefined) throw new Error('That canvas is no longer open.')
+        return { frame: object.frame, parent, field, parentRef: env, stack: this.assetStack(object.frame, parent) }
+      }
+      if (component?.type !== 'sceneViewer') throw new Error('Add a component to a menu, a scene, a composite, or a Z field.')
+      const scene = viewerScene(component, object.frame.overrides[object.componentId], this.hooks.assets())
+      if (!scene) throw new Error('Choose a scene before adding to it.')
+      if (this.ensureScene(object.frame, scene)) this.loadScene(object.frame, scene)
+      const env = this.compiled.get(object.frame)?.scenes.get(scene.id)?.envRef
+      if (env === undefined) throw new Error('That scene is no longer open.')
+      const parent = `scene:${scene.id}`
+      return { frame: object.frame, parent, parentRef: env, stack: this.assetStack(object.frame, parent) }
+    }
+    throw new Error('Add a component to a menu, a scene, a composite, or a Z field.')
+  }
+
+  private storageKey(target: SpawnTarget): string {
+    return target.field ? fieldBin(target.parent, target.field) : target.parent
+  }
+
+  private spawnSiblings(target: SpawnTarget): MenuComponent[] {
+    return canvasComponents(canvasList(this.authoredAt(target), this.added.get(target.frame), target.parent, true))
+  }
+
+  private authoredAt(target: SpawnTarget): readonly MenuComponent[] {
+    if (!target.parent) return this.menu(target.frame.menuId)?.components ?? []
+    if (target.parent.startsWith('scene:') && !target.parent.slice('scene:'.length).includes('/')) {
+      return sceneById(this.hooks.assets(), target.parent.slice('scene:'.length))?.components ?? []
+    }
+    return this.compositeAsset(target.frame, target.parent)?.components ?? []
+  }
+
+  private adopt(frame: PlayFrame, parent: string, component: MenuComponent): void {
+    const map = this.addedOf(frame)
+    const list = map[parent] ?? []
+    list.push(component)
+    map[parent] = list
+  }
+
+  private compileSpawned(target: SpawnTarget, component: MenuComponent, live: boolean): void {
+    const compiled = this.compiled.get(target.frame)
+    if (!compiled) throw new Error('That canvas is no longer open.')
+    this.compilePieces(target.frame, [component], target.parentRef, target.parent, target.stack, compiled.components, compiled.composites)
+    if (!live) return
+    if (component.type === 'composite') {
+      this.runCompositeLoads(target.frame, [component], target.parent, target.stack, false)
+      const sceneId = target.parent.startsWith('scene:') ? target.parent.slice('scene:'.length).split('/')[0] ?? '' : ''
+      if (!sceneId || this.sceneShown(target.frame, sceneId)) {
+        this.runCompositeShows(target.frame, [component], target.parent, target.stack, false)
+      }
+      return
+    }
+    if (component.type !== 'sceneViewer') return
+    const scene = sceneById(this.hooks.assets(), component.sceneId)
+    if (scene && this.ensureScene(target.frame, scene)) this.loadScene(target.frame, scene)
+    this.runSceneShows(target.frame)
+  }
+
+  private restoreAdded(frame: PlayFrame, pieces: SavedPiece[] | undefined): void {
+    if (!pieces?.length) return
+    const ordered = pieces.slice().sort((left, right) => left.parent.length - right.parent.length || left.parent.localeCompare(right.parent))
+    for (const piece of ordered) {
+      if (!piece || typeof piece.parent !== 'string' || !piece.component || typeof piece.component !== 'object') continue
+      const component = JSON.parse(JSON.stringify(piece.component)) as MenuComponent
+      if (!component.id || typeof component.type !== 'string') continue
+      const field = typeof piece.field === 'string' ? piece.field : ''
+      const parentRef = this.envForParent(frame, piece.parent)
+      if (parentRef === undefined) continue
+      this.adopt(frame, field ? fieldBin(piece.parent, field) : piece.parent, component)
+      this.compileSpawned({ frame, parent: piece.parent, ...(field ? { field } : {}), parentRef, stack: this.assetStack(frame, piece.parent) }, component, false)
+    }
+  }
+
+  private envForParent(frame: PlayFrame, parent: string): number | undefined {
+    const compiled = this.compiled.get(frame)
+    if (!compiled) return undefined
+    if (!parent) return compiled.menuRef
+    if (parent.startsWith('scene:') && !parent.slice('scene:'.length).includes('/')) {
+      return compiled.scenes.get(parent.slice('scene:'.length))?.envRef
+    }
+    return compiled.composites.get(parent)
+  }
+
+  private assetStack(frame: PlayFrame, parent: string): string[] {
+    const stack: string[] = []
+    const sceneRoot = parent.startsWith('scene:') ? parent.slice('scene:'.length).split('/')[0] ?? '' : ''
+    if (sceneRoot) stack.push(sceneRoot)
+    if (!parent || (sceneRoot && parent === `scene:${sceneRoot}`)) return stack
+    const menu = this.menu(frame.menuId)
+    if (!menu) return stack
+    const local = sceneRoot ? parent.slice(parent.indexOf('/') + 1) : parent
+    let components: readonly MenuComponent[] = sceneRoot
+      ? (sceneById(this.hooks.assets(), sceneRoot)?.components ?? [])
+      : menu.components
+    let key = sceneRoot ? `scene:${sceneRoot}` : ''
+    for (const part of local.split('/').filter(Boolean)) {
+      const found = findInList(canvasList(components, this.added.get(frame), key, true), part)?.component
+      if (found?.type !== 'composite' || !found.compositeId) break
+      stack.push(found.compositeId)
+      const asset = compositeById(this.hooks.assets(), found.compositeId)
+      if (!asset) break
+      key = instanceId(key, found.id)
+      components = asset.components
+    }
+    return stack
+  }
+
+  private removePiece(L: unknown): number {
+    const object = this.objects.get(lua.lua_tointeger(L, lua.lua_upvalueindex(1)))
+    if (!object || (object.kind !== 'component' && object.kind !== 'composite')) {
+      return this.fail(L, 'Only a component added from a script can be removed.')
+    }
+    const id = object.kind === 'composite' ? object.instanceId : object.componentId
+    try {
+      this.removeAdded(object.frame, id)
+      this.hooks.changed()
+      return 0
+    } catch (error) {
+      return this.fail(L, error instanceof Error ? error.message : 'Could not remove that component.')
+    }
+  }
+
+  private removeAdded(frame: PlayFrame, id: string): void {
+    const map = this.added.get(frame)
+    const located = map ? this.locateAdded(map, id) : null
+    if (!map || !located) throw new Error('Only a component added from a script can be removed.')
+    const list = map[located.key]
+    list?.splice(located.index, 1)
+    if (!list?.length) delete map[located.key]
+    for (const key of Object.keys(map)) {
+      if (key === id || key.startsWith(`${id}/`)) delete map[key]
+    }
+    const compiled = this.compiled.get(frame)
+    const dropEnv = (envs: Map<string, number> | undefined): void => {
+      if (!envs) return
+      for (const [key, ref] of [...envs]) {
+        if (key !== id && !key.startsWith(`${id}/`)) continue
+        this.unref(ref)
+        envs.delete(key)
+      }
+    }
+    dropEnv(compiled?.components)
+    dropEnv(compiled?.composites)
+    for (const key of Object.keys(frame.overrides)) {
+      if (key === id || key.startsWith(`${id}/`)) delete frame.overrides[key]
+    }
+    const presented = this.presented.get(frame)
+    if (presented) {
+      for (const key of [...presented]) {
+        if (key === id || key.startsWith(`${id}/`)) presented.delete(key)
+      }
+    }
+    const failed = this.compositeFailed.get(frame)
+    if (failed) {
+      for (const key of [...failed]) {
+        if (key === id || key.startsWith(`${id}/`)) failed.delete(key)
+      }
+    }
+  }
+
+  private locateAdded(map: AddedMap, id: string): { key: string; index: number } | null {
+    const slash = id.lastIndexOf('/')
+    const parent = slash >= 0 ? id.slice(0, slash) : ''
+    const localId = slash >= 0 ? id.slice(slash + 1) : id
+    const direct = map[parent]
+    const directAt = direct?.findIndex((item) => item.id === localId) ?? -1
+    if (direct && directAt >= 0) return { key: parent, index: directAt }
+    const prefix = parent ? `${parent}/~` : '~'
+    for (const key of Object.keys(map)) {
+      if (!key.startsWith(prefix) || key.slice(prefix.length).includes('/')) continue
+      const list = map[key]
+      const index = list?.findIndex((item) => item.id === localId) ?? -1
+      if (list && index >= 0) return { key, index }
+    }
+    return null
+  }
+
   private componentByHandle(frame: PlayFrame, handle: string): MenuComponent | null {
     if (!handle) return null
     const menu = this.menu(frame.menuId)
-    return menu ? findByHandle(menu.components, handle) : null
+    return menu ? findByHandle(canvasList(menu.components, this.added.get(frame), '', true), handle) : null
   }
+}
+
+function savedPieces(sceneId: string, added: AddedMap): SavedPiece[] {
+  const prefix = `scene:${sceneId}`
+  const pieces: SavedPiece[] = []
+  for (const [key, list] of Object.entries(added)) {
+    const place = binPlace(key)
+    if (place.parent !== prefix && !place.parent.startsWith(`${prefix}/`)) continue
+    for (const component of list) {
+      const saved: SavedPiece = { parent: place.parent, component: JSON.parse(JSON.stringify(component)) as MenuComponent }
+      if (place.field) saved.field = place.field
+      pieces.push(saved)
+    }
+  }
+  return pieces
 }
 
 function sourceFor(assets: Asset[], scriptId: string | null): string {

@@ -4,7 +4,7 @@ import { sameProjectPath, type RecentProject } from '@shared/recent'
 import { usePlayStore } from '@/stores/play'
 import { useProjectStore } from '@/stores/project'
 import { useSessionStore } from '@/stores/session'
-import { GAME_PROPERTIES_WINDOW } from '@shared/workspace'
+import { GAME_PROPERTIES_WINDOW, INPUT_STYLE_WINDOW } from '@shared/workspace'
 import { isCanvas } from '@shared/types'
 import AssetBrowser from './components/AssetBrowser.vue'
 import BookEditor from './components/BookEditor.vue'
@@ -233,6 +233,14 @@ function scriptTitle(key: string): string {
           @click="project.openGameProperties()"
         >
           <span class="row-name">Properties</span>
+        </button>
+        <button
+          class="tree-row properties-entry"
+          :class="{ selected: project.focusedWindow?.assetId === INPUT_STYLE_WINDOW && project.workspace.activeTab === 'editor' }"
+          type="button"
+          @click="project.openInputStyle()"
+        >
+          <span class="row-name">Style</span>
         </button>
         <ProjectTree />
       </aside>

@@ -1,4 +1,4 @@
-import { PAGE_FONT_SIZES } from '@shared/books'
+import { PAGE_FONT_SIZES, pageImageEm } from '@shared/books'
 import type { PageAlign, PageMarks, PageRun } from '@shared/types'
 
 export type EditableParagraph = { align: PageAlign; runs: PageRun[] }
@@ -70,7 +70,7 @@ function runHtml(run: PageRun, imageUrl: (id: string | null) => string): string 
   if (run.type === 'text') return `<span style="${styleText(run.marks)}">${escapeHtml(run.text)}</span>`
   if (run.type === 'image') {
     const url = imageUrl(run.imageId)
-    const body = url ? `<img src="${escapeHtml(url)}" alt="" />` : 'Image'
+    const body = url ? `<img src="${escapeHtml(url)}" alt="" style="height:${pageImageEm(run.height)}em;width:auto;max-width:100%" />` : 'Image'
     return doodad('image', run.id, body)
   }
   if (run.type === 'evaluate') return doodad('evaluate', run.id, '<span class="doodad-mark">fx</span> Evaluate')

@@ -146,8 +146,8 @@ describe('books', () => {
           align: 'start' as const,
           runs: [
             { type: 'text' as const, text: 'A👍B', marks: plainMarks() },
-            { type: 'image' as const, imagePath: 'hero.png' },
-            { type: 'input' as const, key: 'name', kind: 'text' as const, value: '', placeholder: 'Name', options: [] }
+            { type: 'image' as const, imagePath: 'hero.png', height: 1.4 },
+            { type: 'input' as const, key: 'name', kind: 'text' as const, value: '', placeholder: 'Name', options: [], style: '', styleId: '' }
           ]
         }
       ],
@@ -161,5 +161,29 @@ describe('books', () => {
     expect(reached).toContain('hero.png')
     expect(reached).not.toContain('name')
     expect(JSON.stringify(clipDisplay(display, 5))).toContain('name')
+  })
+
+  it('sizes a new page image in ems and keeps an older image at one line', () => {
+    const asset = book()
+    const page = asset.chapters[0].pages[0]
+    page.blocks = [{
+      type: 'paragraph',
+      align: 'start',
+      runs: [
+        { type: 'image', id: 'old', imageId: null },
+        { type: 'image', id: 'big', imageId: null, height: 8 }
+      ]
+    }]
+    const parsed = parseAsset(assetDocument(asset), asset.relativePath)
+    if (parsed.type !== 'book') throw new Error('expected a book')
+    const runs = parsed.chapters[0]?.pages[0]?.blocks[0]
+    if (runs?.type !== 'paragraph') throw new Error('expected a paragraph')
+    expect(runs.runs[0]).toMatchObject({ type: 'image', id: 'old' })
+    expect(runs.runs[0]).not.toHaveProperty('height')
+    expect(runs.runs[1]).toMatchObject({ type: 'image', height: 8 })
+    const shown = previewDisplay(parsed.chapters[0].pages[0], [])
+    const paragraph = shown.blocks[0]
+    if (paragraph?.type !== 'paragraph') throw new Error('expected a paragraph')
+    expect(paragraph.runs.map((run) => (run.type === 'image' ? run.height : 0))).toEqual([1.4, 8])
   })
 })

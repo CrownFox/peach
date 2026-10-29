@@ -6,6 +6,7 @@ import { assetLocation } from './paths'
 import type { PageDisplay } from './books'
 import type { Asset } from './types'
 import { SaveLibrary, type SaveKind, type SavePort } from './saves'
+import type { AddedMap } from './spawned'
 
 export type ScriptLog = { tone: 'message' | 'error'; text: string }
 
@@ -293,6 +294,11 @@ export class PlaySession {
     return { ...(this.frames[this.index]?.overrides ?? {}) }
   }
 
+  addedPieces(frame?: PlayFrame): AddedMap {
+    const target = frame ?? this.frames[this.index]
+    return target ? (this.host?.addedFor(target) ?? {}) : {}
+  }
+
   private parkCurrent(): void {
     const frame = this.frames[this.index]
     if (frame) this.host?.parkPersistent(frame)
@@ -330,7 +336,7 @@ export class PlaySession {
     const menu = this.assetsOf().find((asset) => asset.id === frame.menuId && asset.type === 'menu')
     if (!menu || menu.type !== 'menu') return []
     const point = menuPoint(this.pointer, this.viewport, menu.width, menu.height)
-    return surveyPointer(menu, this.assetsOf(), frame.overrides, point, this.displayScale).targets
+    return surveyPointer(menu, this.assetsOf(), frame.overrides, point, this.displayScale, this.addedPieces(frame)).targets
   }
 
   private dismissModals(): void {
@@ -350,7 +356,7 @@ export class PlaySession {
       if (!menu) throw new Error('That menu is missing.')
       return { menu: assetLocation(menu.relativePath), overrides: host.captureOverrides(frame.overrides) }
     })
-    this.saves.putAuto(index, { image, time: new Date().toISOString(), visits, state: host.captureState() })
+    this.saves.putAuto(index, { image, time: new Date().toISOString(), visits, state: host.captureState(), scenes: host.capturePersistent(frames) })
   }
 
   private loadAuto(index: number): void {
@@ -371,6 +377,7 @@ export class PlaySession {
     host.forgetPersistent()
     this.frames = frames
     this.index = frames.length - 1
+    host.restorePersistent(slot.scenes)
     host.open(current)
     this.onChange()
   }

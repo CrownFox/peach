@@ -12,6 +12,7 @@ describe('shared asset classes', () => {
     const field = [...componentSurface('zField').shared, ...componentSurface('zField').own].map((entry) => entry.name)
     expect(field).toContain('visible')
     expect(field).toContain('enabled')
+    expect(field).toContain('new')
     expect(field).not.toContain('width')
     expect(fileSurface().map((entry) => entry.name)).toEqual(['type', 'name', 'path'])
   })

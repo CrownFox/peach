@@ -22,7 +22,7 @@ describe('script suggestions', () => {
 
   it('suggests menu handles and then that component’s fields', () => {
     expect(scriptSuggestions('game.currentMenu.', menu).map((item) => item.label)).toEqual([
-      'play', 'portrait', 'type', 'name', 'width', 'height', 'collisionAt', 'getMousePosition', 'onLoad', 'onUpdate', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave'
+      'play', 'portrait', 'type', 'name', 'width', 'height', 'collisionAt', 'getMousePosition', 'onLoad', 'onUpdate', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave', 'new'
     ])
     const play = scriptSuggestions('game.currentMenu.play.', button).map((item) => item.label)
     expect(play).toContain('text')
@@ -30,25 +30,25 @@ describe('script suggestions', () => {
     expect(play).toContain('width')
     expect(play).not.toContain('image')
     expect(scriptSuggestions('game.currentMenu.portrait.', menu).map((item) => item.label)).toEqual([
-      'image', 'click', 'onInteract', 'type', 'name', 'x', 'y', 'width', 'height', 'visible', 'color', 'enabled', 'z', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave'
+      'image', 'click', 'onInteract', 'type', 'name', 'x', 'y', 'width', 'height', 'visible', 'color', 'enabled', 'z', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave', 'remove'
     ])
   })
 
   it('suggests value on a text component and not a click', () => {
     const text: ScriptHints = { self: 'text', handles: [] }
     expect(scriptSuggestions('self.', text).map((item) => item.label)).toEqual([
-      'value', 'panel', 'onChange', 'type', 'name', 'x', 'y', 'width', 'height', 'visible', 'color', 'enabled', 'z', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave'
+      'value', 'panel', 'onChange', 'type', 'name', 'x', 'y', 'width', 'height', 'visible', 'color', 'enabled', 'z', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave', 'remove'
     ])
-    expect(scriptSuggestions('self:', text)).toEqual([])
+    expect(scriptSuggestions('self:', text).map((item) => item.label)).toEqual(['remove'])
   })
 
   it('suggests self from the script’s point of view', () => {
     expect(scriptSuggestions('self.', menu).map((item) => item.label)).toEqual([
-      'play', 'portrait', 'type', 'name', 'width', 'height', 'collisionAt', 'getMousePosition', 'onLoad', 'onUpdate', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave'
+      'play', 'portrait', 'type', 'name', 'width', 'height', 'collisionAt', 'getMousePosition', 'onLoad', 'onUpdate', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave', 'new'
     ])
     expect(scriptSuggestions('self.', button).map((item) => item.label)).toContain('defaultImage')
     expect(scriptSuggestions('self.', button).map((item) => item.label)).toContain('x')
-    expect(scriptSuggestions('self:', button).map((item) => item.label)).toEqual(['click'])
+    expect(scriptSuggestions('self:', button).map((item) => item.label)).toEqual(['click', 'remove'])
     expect(scriptSuggestions('self:', menu).map((item) => item.label)).toEqual(['collisionAt', 'getMousePosition'])
   })
 
@@ -75,7 +75,7 @@ describe('script suggestions', () => {
     expect(scriptSuggestions('', menu).map((item) => item.label)).toContain('BTN_SPACE')
     expect(scriptSuggestions('', menu).map((item) => item.label)).not.toContain('closeModal')
     expect(scriptSuggestions('game.currentModal.', menu).map((item) => item.label)).toEqual([
-      'play', 'portrait', 'type', 'name', 'width', 'height', 'collisionAt', 'getMousePosition', 'onLoad', 'onUpdate', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave'
+      'play', 'portrait', 'type', 'name', 'width', 'height', 'collisionAt', 'getMousePosition', 'onLoad', 'onUpdate', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave', 'new'
     ])
     expect(scriptSuggestions('string.', menu).map((item) => item.label)).toContain('upper')
   })
@@ -91,8 +91,18 @@ describe('script suggestions', () => {
     expect(scriptSuggestions('self.card.', nested).map((item) => item.label)).toContain('mark')
     expect(scriptSuggestions('self.card.', nested).map((item) => item.label)).toContain('getMousePosition')
     expect(scriptSuggestions('self.card.mark.', nested).map((item) => item.label)).toContain('text')
-    expect(scriptSuggestions('self.card:', nested).map((item) => item.label)).toEqual(['collisionAt', 'getMousePosition'])
-    expect(scriptSuggestions('game.currentMenu.camera.hero:', nested).map((item) => item.label)).toEqual(['collisionWith'])
+    expect(scriptSuggestions('self.card:', nested).map((item) => item.label)).toEqual(['collisionAt', 'getMousePosition', 'remove'])
+    expect(scriptSuggestions('game.currentMenu.camera.hero:', nested).map((item) => item.label)).toEqual(['collisionWith', 'remove'])
+    expect(scriptSuggestions('game.currentMenu.new.', menu).map((item) => item.label)).toEqual([
+      'composite', 'image', 'button', 'panel', 'scene', 'label', 'text', 'collider'
+    ])
+    expect(scriptSuggestions('game.currentMenu.new:', menu)).toEqual([])
+    expect(scriptSuggestions('self.card.new.', nested).map((item) => item.label)).toContain('label')
+    expect(scriptSuggestions('game.currentMenu.camera.new.', nested).map((item) => item.label)).toContain('composite')
+    const layered: ScriptHints = { self: 'menu', handles: [{ name: 'layer', type: 'zField' }] }
+    expect(scriptSuggestions('self.layer.', layered).map((item) => item.label)).toContain('new')
+    expect(scriptSuggestions('self.layer.new.', layered).map((item) => item.label)).toContain('label')
+    expect(scriptSuggestions('self.layer.new:', layered)).toEqual([])
     const viewer: ScriptHints = { self: 'sceneViewer', handles: [], children: [{ name: 'hero', type: 'label' }] }
     expect(scriptSuggestions('self.hero.', viewer).map((item) => item.label)).toContain('text')
   })

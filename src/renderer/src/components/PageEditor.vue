@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { emptyParagraph, isAssetPageField, pageFieldValue, pageInputKeys, PAGE_FONT_SIZES, splitRuns, valueScript, visibleScript } from '@shared/books'
+import { emptyParagraph, isAssetPageField, NEW_PAGE_IMAGE_EM, pageFieldValue, pageImageEm, pageInputKeys, PAGE_FONT_SIZES, splitRuns, valueScript, visibleScript } from '@shared/books'
 import { BUILTIN_FONTS } from '@shared/fonts'
 import { createId } from '@shared/ids'
 import { uniqueName } from '@shared/paths'
 import { assetLocationOf, findAssetByLocation } from '@shared/refs'
-import type { BookAsset, BookPage, PageAlign, PageBlock, PageConditional, PageField, PageMarks, PageRun } from '@shared/types'
+import type { BookAsset, BookPage, PageAlign, PageBlock, PageConditional, PageField, PageInputStyle, PageMarks, PageRun } from '@shared/types'
 import { useProjectStore } from '@/stores/project'
 import { fileUrl, thumbnailFile } from '@/thumbs'
 import { caretInParagraphs, paragraphElements, type EditableParagraph } from '@/pageEdit'
 import AssetSelect from './AssetSelect.vue'
+import InputStyleEditor from './InputStyleEditor.vue'
 import BookPageSelect from './BookPageSelect.vue'
 import PageLine from './PageLine.vue'
 
@@ -273,7 +274,7 @@ function insertRun(run: Exclude<PageRun, { type: 'text' }>): void {
 }
 
 function insertImage(): void {
-  insertRun({ type: 'image', id: createId(), imageId: null })
+  insertRun({ type: 'image', id: createId(), imageId: null, height: NEW_PAGE_IMAGE_EM })
 }
 
 function insertEvaluate(): void {
@@ -282,12 +283,12 @@ function insertEvaluate(): void {
 
 function insertText(): void {
   const keys = page.value ? pageInputKeys(page.value).map((item) => item.key) : []
-  insertRun({ type: 'textInput', id: createId(), key: uniqueName(keys, 'text'), placeholder: '' })
+  insertRun({ type: 'textInput', id: createId(), key: uniqueName(keys, 'text'), placeholder: '', style: '' })
 }
 
 function insertDropdown(): void {
   const keys = page.value ? pageInputKeys(page.value).map((item) => item.key) : []
-  insertRun({ type: 'dropdown', id: createId(), key: uniqueName(keys, 'choice'), options: ['Yes', 'No'] })
+  insertRun({ type: 'dropdown', id: createId(), key: uniqueName(keys, 'choice'), options: ['Yes', 'No'], style: '' })
 }
 
 function insertCondition(): void {
@@ -350,6 +351,22 @@ function setImage(id: string | null): void {
   })
 }
 
+function setImageHeight(event: Event): void {
+  const run = selected.value?.kind === 'run' ? selected.value.run : null
+  const input = event.target as HTMLInputElement
+  if (!run || run.type !== 'image') return
+  const height = Number(input.value)
+  if (!Number.isFinite(height) || height <= 0) {
+    input.value = String(pageImageEm(run.height))
+    return
+  }
+  const next = pageImageEm(height)
+  input.value = String(next)
+  setRun(run.id, (item) => {
+    if (item.type === 'image') item.height = next
+  })
+}
+
 function setInputKey(event: Event): void {
   const run = selected.value?.kind === 'run' ? selected.value.run : null
   if (!run || (run.type !== 'textInput' && run.type !== 'dropdown')) return
@@ -360,6 +377,14 @@ function setInputKey(event: Event): void {
   }
   setRun(run.id, (item) => {
     if (item.type === 'textInput' || item.type === 'dropdown') item.key = key
+  })
+}
+
+function setInputStyle(style: PageInputStyle): void {
+  const run = selected.value?.kind === 'run' ? selected.value.run : null
+  if (!run || (run.type !== 'textInput' && run.type !== 'dropdown')) return
+  setRun(run.id, (item) => {
+    if (item.type === 'textInput' || item.type === 'dropdown') item.style = style.text
   })
 }
 
@@ -571,6 +596,11 @@ function onConditionClick(event: MouseEvent, id: string): void {
         <template v-else-if="selected?.kind === 'run' && selected.run.type === 'image'">
           <p class="side-kicker">Image</p>
           <AssetSelect label="Image" type="image" clearable :model-value="selected.run.imageId" @update:model-value="setImage" />
+          <label class="field">
+            <span class="field-label">Height</span>
+            <input type="number" min="0.5" max="40" step="0.5" :value="pageImageEm(selected.run.height)" @change="setImageHeight" />
+          </label>
+          <p class="tree-hint">Lines of this page's text. Width follows the picture.</p>
           <button class="btn quiet" type="button" @click="removeSelected">Remove</button>
         </template>
         <template v-else-if="selected?.kind === 'run' && selected.run.type === 'evaluate'">
@@ -594,6 +624,16 @@ function onConditionClick(event: MouseEvent, id: string): void {
             <span class="field-label">Options</span>
             <textarea rows="5" :value="selected.run.options.join('\n')" @change="setOptions"></textarea>
           </label>
+          <InputStyleEditor
+            compact
+            layer="insert"
+            :kind="selected.run.type === 'dropdown' ? 'dropdown' : 'text'"
+            :text="selected.run.style"
+            dropdown=""
+            :under="project.meta?.inputStyle"
+            hint="This adds to the game style for this field."
+            @change="setInputStyle"
+          />
           <button class="btn quiet" type="button" @click="removeSelected">Remove</button>
         </template>
         <p v-else class="tree-hint">Select an insert to edit it. Text formatting applies to the words at the cursor.</p>

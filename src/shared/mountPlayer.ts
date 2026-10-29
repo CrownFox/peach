@@ -1,4 +1,5 @@
 import { isTypingTarget, keyAction } from './keys'
+import { readInputStyle, setGlobalInputStyle } from './inputStyle'
 import { installSceneStyles } from './sceneCss'
 import { syncScene, watchDevicePixels } from './paint'
 import { PlaySession } from './playSession'
@@ -13,6 +14,7 @@ type GameFile = {
   author?: string
   icon?: string | null
   entryMenuId?: string | null
+  inputStyle?: unknown
   assets?: unknown[]
 }
 
@@ -42,6 +44,7 @@ async function load(container: HTMLElement): Promise<void> {
     icon.href = game.icon
     document.head.append(icon)
   }
+  setGlobalInputStyle(readInputStyle(game.inputStyle))
   const assets = (game.assets ?? []).flatMap((item) => {
     try {
       return [parseAsset(item, '')]
@@ -86,7 +89,7 @@ async function load(container: HTMLElement): Promise<void> {
     stage.style.height = `${fitted.height}px`
     const displayScale = menu.width > 0 ? fitted.width / menu.width : 1
     const modalOpen = session.modals.length > 0
-    syncScene(scene, buildScene(menu, assets, { pressedId, overrides: session.currentOverrides(), pages: session.pages, displayScale }), (path) => encodeRelative(path), {
+    syncScene(scene, buildScene(menu, assets, { pressedId, overrides: session.currentOverrides(), pages: session.pages, displayScale, added: session.addedPieces() }), (path) => encodeRelative(path), {
       interactive: !modalOpen,
       onPressStart: (id) => {
         pressedId = id
@@ -120,7 +123,7 @@ async function load(container: HTMLElement): Promise<void> {
       host.stage.style.width = `${modalFit.width}px`
       host.stage.style.height = `${modalFit.height}px`
       const modalScale = modal.width > 0 ? modalFit.width / modal.width : 1
-      syncScene(host.scene, buildScene(modal, assets, { pressedId, overrides: frame.overrides, pages: session.pages, displayScale: modalScale }), (path) => encodeRelative(path), {
+      syncScene(host.scene, buildScene(modal, assets, { pressedId, overrides: frame.overrides, pages: session.pages, displayScale: modalScale, added: session.addedPieces(frame) }), (path) => encodeRelative(path), {
         interactive: index === session.modals.length - 1,
         onPressStart: (id) => {
           pressedId = id

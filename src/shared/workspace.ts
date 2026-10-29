@@ -1,11 +1,14 @@
 import type { Workspace } from './types'
 
 export const GAME_PROPERTIES_WINDOW = 'game-properties'
+export const INPUT_STYLE_WINDOW = 'input-style'
 
 export function defaultWorkspace(): Workspace {
   return {
     expanded: [''],
     windows: [],
+    editorGrid: 16,
+    editorSnap: false,
     openMenuIds: [],
     openCompositeIds: [],
     openSceneIds: [],
@@ -48,6 +51,8 @@ export function parseWorkspace(value: unknown): Workspace {
   return {
     expanded: stringList(value.expanded).length > 0 ? stringList(value.expanded) : [''],
     windows,
+    editorGrid: Math.max(1, Math.round(numberOr(value.editorGrid, 16))),
+    editorSnap: value.editorSnap === true,
     openMenuIds: stringList(value.openMenuIds),
     openCompositeIds: stringList(value.openCompositeIds),
     openSceneIds: stringList(value.openSceneIds),

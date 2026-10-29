@@ -57,6 +57,20 @@ const onMouseDown: ApiEntry = { name: 'onMouseDown', label: 'onMouseDown()', kin
 const onMouseUp: ApiEntry = { name: 'onMouseUp', label: 'onMouseUp()', kind: 'event', detail: 'Runs when the pointer is released over this.' }
 const onMouseEnter: ApiEntry = { name: 'onMouseEnter', label: 'onMouseEnter()', kind: 'event', detail: 'Runs when the pointer enters this.' }
 const onMouseLeave: ApiEntry = { name: 'onMouseLeave', label: 'onMouseLeave()', kind: 'event', detail: 'Runs when the pointer leaves this.' }
+const newEntry: ApiEntry = {
+  name: 'new',
+  kind: 'property',
+  detail: 'Constructors that add a component to this canvas for the visit. The saved file stays as it is.'
+}
+
+const removeEntry: ApiEntry = {
+  name: 'remove',
+  label: 'remove()',
+  kind: 'call',
+  insertText: 'remove()',
+  detail: 'Takes this component off the canvas. It has to be one a script added.'
+}
+
 const getMousePosition: ApiEntry = {
   name: 'getMousePosition',
   label: 'getMousePosition()',
@@ -100,7 +114,7 @@ class Root {
 }
 
 class Component extends Root {
-  static override own = [...boxEntries, ...presenceEntries, onMouseDown, onMouseUp, onMouseEnter, onMouseLeave]
+  static override own = [...boxEntries, ...presenceEntries, onMouseDown, onMouseUp, onMouseEnter, onMouseLeave, removeEntry]
 }
 
 class FileAsset extends Root {
@@ -108,7 +122,7 @@ class FileAsset extends Root {
 }
 
 class Canvas extends Root {
-  static override own = [...canvasSize, collisionAt, getMousePosition, onLoad, onUpdate, onMouseDown, onMouseUp, onMouseEnter, onMouseLeave]
+  static override own = [...canvasSize, collisionAt, getMousePosition, onLoad, onUpdate, onMouseDown, onMouseUp, onMouseEnter, onMouseLeave, newEntry]
 }
 
 class Menu extends Canvas {}
@@ -190,7 +204,7 @@ class PageViewer extends Component {
 }
 
 class CompositeSlot extends Component {
-  static override own: ApiEntry[] = [collisionAt, getMousePosition, onLoad, onShow, onUpdate]
+  static override own: ApiEntry[] = [collisionAt, getMousePosition, onLoad, onShow, onUpdate, newEntry]
 }
 
 class SceneViewer extends Component {
@@ -200,7 +214,21 @@ class SceneViewer extends Component {
     { name: 'viewWidth', kind: 'property', detail: 'Scene pixels visible across the view. It follows the scale and cannot be set.' },
     { name: 'viewHeight', kind: 'property', detail: 'Scene pixels visible down the view. It follows the scale and cannot be set.' },
     { name: 'scale', kind: 'property', detail: 'A whole number. 2 draws each scene pixel as 2 by 2.' },
-    { name: 'scene', kind: 'property', detail: 'A scene path.' }
+    { name: 'scene', kind: 'property', detail: 'A scene path.' },
+    newEntry
+  ]
+}
+
+export function spawnSurface(): ApiEntry[] {
+  return [
+    { name: 'composite', kind: 'call', insertText: 'composite("${1:Composites/Player}")', detail: 'Adds a composite. A second argument sets the script id.' },
+    { name: 'image', kind: 'call', insertText: 'image("${1:characters/Hero}")', detail: 'Adds an image. A second argument sets the script id.' },
+    { name: 'button', kind: 'call', insertText: 'button("${1:Buttons/Play}")', detail: 'Adds a button. A second argument sets the script id.' },
+    { name: 'panel', kind: 'call', insertText: 'panel("${1:Panels/Frame}")', detail: 'Adds a panel. A second argument sets the script id.' },
+    { name: 'scene', kind: 'call', insertText: 'scene("${1:Scenes/Town}")', detail: 'Adds a scene viewer. A second argument sets the script id.' },
+    { name: 'label', kind: 'call', insertText: 'label("${1:Hello}")', detail: 'Adds a label. A second argument sets the script id.' },
+    { name: 'text', kind: 'call', insertText: 'text("${1}")', detail: 'Adds a text field. A second argument sets the script id.' },
+    { name: 'collider', kind: 'call', insertText: 'collider("${1:square}")', detail: 'Adds a collider. "square" or "circle". A second argument sets the script id.' }
   ]
 }
 
@@ -230,7 +258,9 @@ class Collider extends Component {
 
 class ZField extends Component {
   static override box = false
-  static override own: ApiEntry[] = []
+  static override own: ApiEntry[] = [
+    { name: 'new', kind: 'property', detail: 'Constructors that add a component to this field for the visit. The saved file stays as it is.' }
+  ]
 }
 
 const componentClass: Record<MenuComponent['type'], typeof Component> = {

@@ -1,7 +1,7 @@
 import type { MenuComponent } from './types'
 import { KEYS } from './keys'
 import { propertiesInScope, type ScriptProperty } from './scriptProperties'
-import { canvasSurface, componentSurface, type ApiEntry } from './runtime'
+import { canvasSurface, componentSurface, spawnSurface, type ApiEntry } from './runtime'
 
 export type ScriptHandle = {
   name: string
@@ -155,7 +155,7 @@ function propertySuggestion(property: ScriptProperty): Suggestion {
   }
 }
 
-function resolveChain(chain: string[], hints: ScriptHints): { kinds: Array<ScriptHost | 'any'>; handles: ScriptHandle[] } | null {
+function resolveChain(chain: string[], hints: ScriptHints): { kinds: Array<ScriptHost | 'any' | 'spawn'>; handles: ScriptHandle[] } | null {
   if (chain[0] === 'parent' && hints.parent) return walkHandles('pageViewer', [], chain.slice(1))
   if (chain[0] === 'game' && (chain[1] === 'currentMenu' || chain[1] === 'currentModal')) return walkHandles('menu', hints.handles, chain.slice(2))
   if (chain[0] !== 'self') return null
@@ -173,10 +173,19 @@ function resolveChain(chain: string[], hints: ScriptHints): { kinds: Array<Scrip
   return walkHandles(hints.self, handles, chain.slice(1))
 }
 
-function walkHandles(kind: ScriptHost, handles: readonly ScriptHandle[], names: string[]): { kinds: ScriptHost[]; handles: ScriptHandle[] } | null {
-  let kinds: ScriptHost[] = [kind]
+type MemberKind = ScriptHost | 'spawn'
+
+const spawnHosts = new Set<MemberKind>(['menu', 'scene', 'composite', 'sceneViewer', 'zField'])
+
+function walkHandles(kind: ScriptHost, handles: readonly ScriptHandle[], names: string[]): { kinds: MemberKind[]; handles: ScriptHandle[] } | null {
+  let kinds: MemberKind[] = [kind]
   let current = handles
   for (const name of names) {
+    if (name === 'new' && kinds.every((item) => spawnHosts.has(item))) {
+      kinds = ['spawn']
+      current = []
+      continue
+    }
     const matches = current.filter((handle) => handle.name === name)
     if (matches.length === 0) return null
     kinds = [...new Set(matches.map((handle) => handle.type))]
@@ -185,10 +194,11 @@ function walkHandles(kind: ScriptHost, handles: readonly ScriptHandle[], names: 
   return { kinds, handles: [...current] }
 }
 
-function suggestResolved(resolved: { kinds: Array<ScriptHost | 'any'>; handles: ScriptHandle[] }, methodsOnly: boolean): Suggestion[] {
+function suggestResolved(resolved: { kinds: Array<ScriptHost | 'any' | 'spawn'>; handles: ScriptHandle[] }, methodsOnly: boolean): Suggestion[] {
   if (resolved.kinds.length === 1 && resolved.kinds[0] === 'any') return componentFields(componentTypes, methodsOnly)
   return dedupe(
     resolved.kinds.flatMap((kind) => {
+      if (kind === 'spawn') return methodsOnly ? [] : spawnSurface().map(apiSuggestion)
       if (kind === 'any') return componentFields(componentTypes, methodsOnly)
       const handles = kind === 'menu' || kind === 'scene' || kind === 'composite' || kind === 'sceneViewer' ? resolved.handles : []
       return suggestHost(kind, handles, methodsOnly)

@@ -51,6 +51,7 @@ export async function exportGame(projectDir: string, destination: string): Promi
     author: snapshot.meta.author,
     icon,
     entryMenuId: snapshot.meta.entryMenuId,
+    inputStyle: snapshot.meta.inputStyle,
     assets
   }
   await fs.writeFile(path.join(destination, 'game.json'), `${JSON.stringify(game, null, 2)}\n`, 'utf8')

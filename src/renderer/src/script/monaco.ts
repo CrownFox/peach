@@ -1,7 +1,9 @@
 import editorWorker from 'monaco-editor/editor/editor.worker.js?worker'
 import { editor, languages } from 'monaco-editor/editor/editor.api.js'
-// The API build leaves out the suggestion widget. This import registers it.
+// The API build leaves out the suggestion widget and Enter-to-indent. These imports register them.
 import 'monaco-editor/editor/contrib/suggest/browser/suggestController.js'
+import 'monaco-editor/editor/contrib/indentation/browser/indentation.js'
+import { inputStyleCompletions } from '@shared/inputStyleComplete'
 import { scriptSuggestions, type ScriptHints, type Suggestion } from '@shared/scriptSuggest'
 
 export type { ScriptHints }
@@ -34,7 +36,8 @@ function ensureMonaco(): void {
       { token: 'keyword', foreground: 'e8946a' },
       { token: 'comment', foreground: '7d7268' },
       { token: 'string', foreground: 'e6c27a' },
-      { token: 'number', foreground: '8fb573' }
+      { token: 'number', foreground: '8fb573' },
+      { token: 'attribute.name', foreground: '8ec8ff' }
     ],
     colors: {
       'editor.background': '#14110f',
@@ -57,6 +60,7 @@ function ensureMonaco(): void {
     wordPattern: /[A-Za-z_][A-Za-z0-9_]*/
   })
   languages.setMonarchTokensProvider('lua', luaTokens)
+  registerInputStyleLanguage()
   languages.registerCompletionItemProvider('lua', {
     triggerCharacters: ['.', ':'],
     provideCompletionItems(model, position) {
@@ -72,6 +76,87 @@ function ensureMonaco(): void {
       const source = hints.suggestProperties ? model.getValue() : ''
       return {
         suggestions: scriptSuggestions(before, hints, source).map((item) => toCompletion(item, range))
+      }
+    }
+  })
+}
+
+function registerInputStyleLanguage(): void {
+  languages.register({ id: 'peach-css' })
+  languages.setLanguageConfiguration('peach-css', {
+    comments: { blockComment: ['/*', '*/'] },
+    brackets: [['{', '}'], ['[', ']'], ['(', ')']],
+    autoClosingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" }
+    ],
+    surroundingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" }
+    ],
+    wordPattern: /(&:[A-Za-z]+|[#.]?[A-Za-z0-9_-]+)/,
+    indentationRules: {
+      increaseIndentPattern: /\{[^}]*$/,
+      decreaseIndentPattern: /^\s*\}/
+    },
+    onEnterRules: [
+      {
+        beforeText: /\{\s*$/,
+        action: { indentAction: languages.IndentAction.Indent }
+      }
+    ]
+  })
+  languages.setMonarchTokensProvider('peach-css', {
+    tokenizer: {
+      root: [
+        [/\/\*/, 'comment', '@comment'],
+        [/&:(?:hover|focus|disabled)/, 'keyword'],
+        [/"([^"\\]|\\.)*"/, 'string'],
+        [/'([^'\\]|\\.)*'/, 'string'],
+        [/#[0-9a-fA-F]+\b/, 'number'],
+        [/-?\d+(\.\d+)?(px|em|rem|%|vh|vw|ch|ex)?/, 'number'],
+        [/[a-zA-Z_-][\w-]*(?=\s*:)/, 'attribute.name'],
+        [/[{}()]/, 'delimiter.bracket'],
+        [/[;:,]/, 'delimiter']
+      ],
+      comment: [
+        [/\*\//, 'comment', '@pop'],
+        [/./, 'comment']
+      ]
+    }
+  })
+  languages.registerCompletionItemProvider('peach-css', {
+    triggerCharacters: [':', '&', '-'],
+    provideCompletionItems(model, position) {
+      const before = model.getValue().slice(0, model.getOffsetAt(position))
+      const lineAfter = model.getLineContent(position.lineNumber).slice(position.column - 1)
+      const word = model.getWordUntilPosition(position)
+      const range = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn
+      }
+      return {
+        suggestions: inputStyleCompletions(before, lineAfter).map((item) => ({
+          label: item.label,
+          kind: item.kind === 'property'
+            ? languages.CompletionItemKind.Property
+            : item.kind === 'value'
+              ? languages.CompletionItemKind.Value
+              : languages.CompletionItemKind.Snippet,
+          insertText: item.insertText,
+          detail: item.detail,
+          range,
+          sortText: `${item.kind === 'block' ? '0' : item.kind === 'property' ? '1' : '2'}${item.label}`,
+          insertTextRules: item.snippet ? languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined
+        }))
       }
     }
   })

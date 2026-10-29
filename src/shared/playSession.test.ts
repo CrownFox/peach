@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PlaySession } from './playSession'
+import { buildScene } from './scene'
 import { createAsset, createMenuComponent, createPageViewerComponent } from './assets'
 import { encodeBookPage, plainMarks } from './books'
 import { documentText, emptyDocument, memorySavePort, parseDocument } from './saves'
@@ -455,7 +456,7 @@ describe('play session', () => {
         runs: [
           { type: 'text', text: 'Hello ', marks: plainMarks() },
           { type: 'evaluate', id: 'ev', script: 'function value()\n  return "there"\nend\n' },
-          { type: 'dropdown', id: 'choice', key: 'choice', options: ['Yes', 'No'] }
+          { type: 'dropdown', id: 'choice', key: 'choice', options: ['Yes', 'No'], style: '' }
         ]
       },
       {
@@ -550,7 +551,7 @@ describe('play session', () => {
       {
         type: 'paragraph',
         align: 'start',
-        runs: [{ type: 'dropdown', id: 'choice', key: 'choice', options: ['Yes', 'No'] }]
+        runs: [{ type: 'dropdown', id: 'choice', key: 'choice', options: ['Yes', 'No'], style: '' }]
       }
     ]
     page.script = `function onLoad(parent)
@@ -599,7 +600,7 @@ describe('play session', () => {
       {
         type: 'paragraph',
         align: 'start',
-        runs: [{ type: 'dropdown', id: 'choice', key: 'choice', options: ['Yes', 'No'] }]
+        runs: [{ type: 'dropdown', id: 'choice', key: 'choice', options: ['Yes', 'No'], style: '' }]
       }
     ]
     page.script = `function onLoad(parent)
@@ -1073,6 +1074,100 @@ describe('play session', () => {
     expect(heroX()).toBe(1)
     expect(session.logs.map((entry) => entry.text)).toContain('fresh')
     expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('saves a persistent scene and restores it, including after the menu that shows it is gone', () => {
+    const port = memorySavePort()
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    town.persistent = true
+    town.script = `local state = { n = 0, shown = 0 }
+      function onLoad()
+        state.n = 1
+        print("load")
+      end
+      function onShow()
+        state.shown = state.shown + 1
+      end
+      function onUpdate(dt)
+        state.n = state.n + 1
+        self.hero.x = state.n
+        self.hero.text = tostring(state.shown)
+      end`
+    const hero = button(
+      'hero',
+      'hero',
+      `local hits = 0
+        function onInteract()
+          hits = hits + 1
+          print("hit " .. tostring(hits))
+        end`
+    )
+    town.components = [hero]
+    const camera = createMenuComponent('sceneViewer', [])
+    camera.id = 'camera'
+    camera.handle = 'camera'
+    if (camera.type === 'sceneViewer') camera.sceneId = 'town'
+    const main = menu(
+      'main',
+      'Main Menu.menu.json',
+      '',
+      [camera, button('save', 'save', `function onInteract() game.saveSlot(1) end`), button('load', 'load', `function onInteract() game.loadSlot(1) end`)]
+    )
+    const away = menu('away', 'Away.menu.json', '', [button('save', 'save', `function onInteract() game.saveSlot(1) end`), button('load', 'load', `function onInteract() game.loadSlot(1) end`)])
+    const assets = [main, away, town, plate, plateButton]
+    const session = new PlaySession()
+    session.attachSaves(port)
+    session.assetsOf = () => assets
+    session.reset('main')
+    const heroX = (): number | undefined => session.currentOverrides()['scene:town/hero']?.x
+    const heroText = (): string | undefined => session.currentOverrides()['scene:town/hero']?.text
+    const loads = (): number => session.logs.filter((entry) => entry.text === 'load').length
+    session.tick(16)
+    expect(heroX()).toBe(2)
+    expect(heroText()).toBe('1')
+    expect(loads()).toBe(1)
+    session.activate('camera::hero')
+    session.activate('save')
+    session.tick(16)
+    expect(heroX()).toBe(3)
+    session.activate('load')
+    expect(loads()).toBe(1)
+    expect(heroX()).toBe(2)
+    expect(heroText()).toBe('1')
+    session.tick(16)
+    expect(heroX()).toBe(3)
+    expect(heroText()).toBe('2.0')
+    session.activate('camera::hero')
+    expect(session.logs.map((entry) => entry.text)).toContain('hit 2.0')
+    const again = new PlaySession()
+    again.attachSaves(port)
+    again.assetsOf = () => assets
+    again.reset('main')
+    again.activate('load')
+    again.tick(16)
+    expect(again.logs.filter((entry) => entry.text === 'load')).toHaveLength(1)
+    expect(again.currentOverrides()['scene:town/hero']?.x).toBe(3)
+    expect(again.currentOverrides()['scene:town/hero']?.text).toBe('2.0')
+    again.activate('camera::hero')
+    expect(again.logs.map((entry) => entry.text)).toContain('hit 2.0')
+    session.navigate('away')
+    session.activate('save')
+    session.activate('load')
+    session.navigate('main')
+    session.tick(16)
+    expect(session.logs.filter((entry) => entry.text === 'load')).toHaveLength(1)
+    expect(session.currentOverrides()['scene:town/hero']?.x).toBe(4)
+    town.script = `function onLoad()
+      print("fresh")
+      self.hero.x = 7
+    end`
+    session.navigate('away')
+    session.activate('load')
+    session.navigate('main')
+    expect(session.logs.map((entry) => entry.text)).toContain('fresh')
+    expect(session.currentOverrides()['scene:town/hero']?.x).toBe(7)
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+    expect(again.logs.filter((entry) => entry.tone === 'error')).toEqual([])
   })
 
   it('runs onShow when a persistent scene is shown on a new menu', () => {
@@ -2071,5 +2166,327 @@ end`
     expect(hero.z).toBe(2)
     expect(session.currentOverrides().back?.z).toBeUndefined()
     expect(session.logs.some((entry) => entry.tone === 'error' && entry.text.includes('Z field'))).toBe(true)
+  })
+
+  it('adds a composite to the open menu and places it after the composite has loaded', () => {
+    const mark = createMenuComponent('label', [])
+    mark.id = 'mark'
+    mark.handle = 'mark'
+    const player = createAsset('composite', 'Player', 'Composites/Player.composite.json', 'player-asset') as CompositeAsset
+    player.script = `function onLoad()
+      print("load")
+      self.x = 1
+    end
+    function onShow()
+      print("show")
+    end
+    function onUpdate()
+      print("tick")
+    end`
+    player.components = [mark]
+    const main = menu(
+      'main',
+      'Main.menu.json',
+      `function onLoad()
+        local actor = game.currentMenu.new.composite("Composites/Player", "player")
+        print("after")
+        actor.x = 50
+        actor.y = 40
+        print(game.currentMenu.player.mark.text)
+      end`,
+      []
+    )
+    const session = start([main, player, plate, plateButton], 'main')
+    const added = session.addedPieces()[''] ?? []
+    const actor = added.find((item) => item.handle === 'player')
+    expect(main.components).toEqual([])
+    expect(actor?.type).toBe('composite')
+    expect(actor && session.currentOverrides()[actor.id]?.x).toBe(50)
+    expect(actor && session.currentOverrides()[actor.id]?.y).toBe(40)
+    expect(session.logs.filter((entry) => entry.tone !== 'error').map((entry) => entry.text)).toEqual(['load', 'show', 'after', 'Label'])
+    const nodes = buildScene(main, [main, player], { overrides: session.currentOverrides(), added: session.addedPieces() })
+    expect(nodes.some((node) => actor && node.id.startsWith(`${actor.id}/`))).toBe(true)
+    session.tick(16)
+    expect(session.logs.map((entry) => entry.text)).toContain('tick')
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('names a second copy, refuses a bad path, and removes a label', () => {
+    const player = createAsset('composite', 'Player', 'Composites/Player.composite.json', 'player-asset') as CompositeAsset
+    const main = menu(
+      'main',
+      'Main.menu.json',
+      `function onLoad()
+        game.currentMenu.new.composite("Composites/Player")
+        game.currentMenu.new.composite("Composites/Player")
+        local caption = game.currentMenu.new.label("Hello", "caption")
+        caption.x = 4
+        local picture = game.currentMenu.new.image("characters/Hero", "hero")
+        print(tostring(picture.width))
+        local hit = game.currentMenu.new.collider("circle", "hit")
+        print(hit.shape)
+        print(game.currentMenu.player and "one" or "no")
+        print(game.currentMenu.player2 and "two" or "no")
+        caption:remove()
+        print(game.currentMenu.caption and "still" or "gone")
+        local _, missingErr = pcall(function()
+          game.currentMenu.new.composite("Composites/Missing")
+        end)
+        print(missingErr)
+        local _, reservedErr = pcall(function()
+          game.currentMenu.new.label("Hi", "new")
+        end)
+        print(reservedErr)
+      end`,
+      []
+    )
+    const session = start([main, player, hero, plate, plateButton], 'main')
+    const handles = (session.addedPieces()[''] ?? []).map((item) => item.handle).sort()
+    expect(handles).toEqual(['hero', 'hit', 'player', 'player2'])
+    expect(session.logs.map((entry) => entry.text)).toEqual(expect.arrayContaining(['32.0', 'circle', 'one', 'two', 'gone']))
+    expect(session.logs.some((entry) => entry.text.includes('No composite at "Composites/Missing".'))).toBe(true)
+    expect(session.logs.some((entry) => entry.text.includes('new is reserved.'))).toBe(true)
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+    const picture = (session.addedPieces()[''] ?? []).find((item) => item.handle === 'hero')
+    expect(picture?.width).toBe(32)
+    expect(picture?.height).toBe(32)
+    expect(picture?.x).toBe(0)
+    expect(picture?.y).toBe(0)
+  })
+
+  it('waits until the next frame to update a composite added during onUpdate', () => {
+    const player = createAsset('composite', 'Player', 'Composites/Player.composite.json', 'player-asset') as CompositeAsset
+    player.script = `function onUpdate()
+      print("tick")
+    end`
+    const main = menu(
+      'main',
+      'Main.menu.json',
+      `local made = false
+      function onUpdate()
+        if made then return end
+        made = true
+        game.currentMenu.new.composite("Composites/Player", "player")
+        print("spawned")
+      end`,
+      []
+    )
+    const session = start([main, player], 'main')
+    session.tick(16)
+    expect(session.logs.map((entry) => entry.text)).toEqual(['spawned'])
+    session.tick(16)
+    expect(session.logs.map((entry) => entry.text)).toEqual(['spawned', 'tick'])
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('adds a label to one composite copy and leaves the other copy alone', () => {
+    const badge = createAsset('composite', 'Badge', 'Badge.composite.json', 'badge') as CompositeAsset
+    badge.script = `function onLoad()
+      if self.name == "Foo" then
+        self.new.label("A", "extra")
+      end
+      print((self.extra and "yes" or "no") .. " " .. self.name)
+    end`
+    const foo = createMenuComponent('composite', [])
+    foo.id = 'foo'
+    foo.name = 'Foo'
+    foo.handle = 'foo'
+    if (foo.type === 'composite') foo.compositeId = 'badge'
+    const bar = createMenuComponent('composite', [])
+    bar.id = 'bar'
+    bar.name = 'Bar'
+    bar.handle = 'bar'
+    if (bar.type === 'composite') bar.compositeId = 'badge'
+    const main = menu('main', 'Main.menu.json', '', [foo, bar])
+    const session = start([main, badge], 'main')
+    expect(session.logs.map((entry) => entry.text)).toEqual(['yes Foo', 'no Bar'])
+    expect(session.addedPieces().foo?.map((item) => item.handle)).toEqual(['extra'])
+    expect(session.addedPieces().bar).toBeUndefined()
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('adds to the scene a viewer shows, and a persistent scene keeps that piece', () => {
+    const port = memorySavePort()
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    town.persistent = true
+    town.script = `function onLoad()
+      local mark = self.new.label("Hi", "mark")
+      mark.x = 12
+      print("load")
+    end`
+    const camera = createMenuComponent('sceneViewer', [])
+    camera.id = 'camera'
+    camera.handle = 'camera'
+    if (camera.type === 'sceneViewer') camera.sceneId = 'town'
+    const main = menu(
+      'main',
+      'Main Menu.menu.json',
+      `function onLoad()
+        print(game.currentMenu.camera.mark.text)
+      end`,
+      [camera, button('save', 'save', `function onInteract() game.saveSlot(1) end`), button('load', 'load', `function onInteract() game.loadSlot(1) end`)]
+    )
+    const assets = [main, town, plate, plateButton]
+    const session = new PlaySession()
+    session.attachSaves(port)
+    session.assetsOf = () => assets
+    session.reset('main')
+    const sceneAdded = (): { id: string; handle: string }[] =>
+      (session.addedPieces()[`scene:town`] ?? []).map((item) => ({ id: item.id, handle: item.handle }))
+    expect(sceneAdded().map((item) => item.handle)).toEqual(['mark'])
+    expect(session.logs.map((entry) => entry.text)).toEqual(expect.arrayContaining(['load', 'Hi']))
+    const mark = sceneAdded().find((item) => item.handle === 'mark')
+    expect(mark && session.currentOverrides()[`scene:town/${mark.id}`]?.x).toBe(12)
+    session.activate('save')
+    const again = new PlaySession()
+    again.attachSaves(port)
+    again.assetsOf = () => assets
+    again.reset('main')
+    again.activate('load')
+    const restored = (again.addedPieces()[`scene:town`] ?? []).find((item) => item.handle === 'mark')
+    expect(restored && again.currentOverrides()[`scene:town/${restored.id}`]?.x).toBe(12)
+    expect(again.logs.filter((entry) => entry.text === 'load')).toHaveLength(1)
+    expect(again.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('adds a label through a scene viewer onto the shared scene', () => {
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    const camera = createMenuComponent('sceneViewer', [])
+    camera.id = 'camera'
+    camera.handle = 'camera'
+    if (camera.type === 'sceneViewer') camera.sceneId = 'town'
+    const other = createMenuComponent('sceneViewer', [])
+    other.id = 'other'
+    other.handle = 'other'
+    if (other.type === 'sceneViewer') other.sceneId = 'town'
+    const main = menu(
+      'main',
+      'Main.menu.json',
+      `function onLoad()
+        local seen = game.currentMenu.camera.new.label("Seen", "seen")
+        seen.x = 9
+        print(game.currentMenu.other.seen.text)
+      end`,
+      [camera, other]
+    )
+    const session = start([main, town], 'main')
+    const added = session.addedPieces()['scene:town'] ?? []
+    expect(added.map((item) => item.handle)).toEqual(['seen'])
+    expect(session.logs.map((entry) => entry.text)).toContain('Seen')
+    const seen = added[0]
+    expect(seen && session.currentOverrides()[`scene:town/${seen.id}`]?.x).toBe(9)
+    expect(town.components).toEqual([])
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('drops a component added to a menu when play restarts', () => {
+    const main = menu(
+      'main',
+      'Main.menu.json',
+      '',
+      [button('add', 'add', `function onInteract() game.currentMenu.new.label("Hi", "caption") end`)]
+    )
+    const session = start([main, plate, plateButton], 'main')
+    session.activate('add')
+    expect(session.addedPieces()['']?.map((item) => item.handle)).toEqual(['caption'])
+    session.reset('main')
+    expect(session.addedPieces()['']).toBeUndefined()
+    expect(main.components.map((item) => item.handle)).toEqual(['add'])
+  })
+
+  it('adds a component inside a Z field and sorts it with that field', () => {
+    const hero = createMenuComponent('label', [])
+    hero.id = 'hero'
+    hero.handle = 'hero'
+    hero.z = 1
+    const field = createMenuComponent('zField', [])
+    if (field.type !== 'zField') throw new Error('field')
+    field.id = 'layer'
+    field.handle = 'layer'
+    field.children = [hero]
+    const back = createMenuComponent('label', [])
+    back.id = 'back'
+    back.handle = 'back'
+    const main = menu(
+      'main',
+      'Main.menu.json',
+      `function onLoad()
+        local mark = self.layer.new.label("Hi", "mark")
+        print(self.mark.text)
+        print(mark.z)
+        local ok, err = pcall(function() self.layer.new.label("No", "back") end)
+        print(err)
+        self.new.label("Out", "out")
+      end`,
+      [back, field, button('drop', 'drop', `function onInteract() game.currentMenu.mark:remove() print(game.currentMenu.mark and "still" or "gone") end`)]
+    )
+    const session = start([main, plate, plateButton], 'main')
+    const inside = session.addedPieces()['~layer'] ?? []
+    const mark = inside.find((item) => item.handle === 'mark')
+    expect(inside.map((item) => item.handle)).toEqual(['mark'])
+    expect(session.addedPieces()['']?.map((item) => item.handle)).toEqual(['out'])
+    expect(field.children.map((item) => item.id)).toEqual(['hero'])
+    expect(mark?.z).toBe(0)
+    expect(mark && session.currentOverrides()[mark.id]?.z).toBeUndefined()
+    const nodes = buildScene(main, [main, plate, plateButton], { overrides: session.currentOverrides(), added: session.addedPieces() })
+    const order = nodes.map((node) => node.id).filter((id) => id === 'back' || id === 'hero' || id === 'drop' || id === mark?.id || id === (session.addedPieces()[''] ?? [])[0]?.id)
+    const out = (session.addedPieces()[''] ?? [])[0]
+    expect(order).toEqual(['back', mark?.id, 'hero', 'drop', out?.id])
+    expect(session.logs.map((entry) => entry.text)).toEqual(expect.arrayContaining(['Hi', '0.0']))
+    expect(session.logs.some((entry) => entry.text.includes('That script id is already used.'))).toBe(true)
+    session.activate('drop')
+    expect(session.addedPieces()['~layer']).toBeUndefined()
+    expect(session.logs.map((entry) => entry.text)).toContain('gone')
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+  })
+
+  it('keeps a component added to a Z field on a persistent scene', () => {
+    const port = memorySavePort()
+    const town = createAsset('scene', 'Town', 'Town.scene.json', 'town') as SceneAsset
+    town.persistent = true
+    const field = createMenuComponent('zField', [])
+    if (field.type !== 'zField') throw new Error('field')
+    field.id = 'layer'
+    field.handle = 'layer'
+    town.components = [field]
+    town.script = `function onLoad()
+      local mark = self.layer.new.label("Hi", "mark")
+      mark.z = 4
+      print("load")
+    end`
+    const camera = createMenuComponent('sceneViewer', [])
+    camera.id = 'camera'
+    camera.handle = 'camera'
+    if (camera.type === 'sceneViewer') camera.sceneId = 'town'
+    const main = menu(
+      'main',
+      'Main Menu.menu.json',
+      `function onLoad()
+        print(game.currentMenu.camera.mark.text)
+      end`,
+      [camera, button('save', 'save', `function onInteract() game.saveSlot(1) end`), button('load', 'load', `function onInteract() game.loadSlot(1) end`)]
+    )
+    const assets = [main, town, plate, plateButton]
+    const session = new PlaySession()
+    session.attachSaves(port)
+    session.assetsOf = () => assets
+    session.reset('main')
+    const stored = session.addedPieces()['scene:town/~layer'] ?? []
+    expect(stored.map((item) => item.handle)).toEqual(['mark'])
+    const mark = stored[0]
+    expect(mark && session.currentOverrides()[`scene:town/${mark.id}`]?.z).toBe(4)
+    expect(field.children).toEqual([])
+    session.activate('save')
+    const again = new PlaySession()
+    again.attachSaves(port)
+    again.assetsOf = () => assets
+    again.reset('main')
+    again.activate('load')
+    const restored = (again.addedPieces()['scene:town/~layer'] ?? []).find((item) => item.handle === 'mark')
+    expect(restored && again.currentOverrides()[`scene:town/${restored.id}`]?.z).toBe(4)
+    expect(again.logs.filter((entry) => entry.text === 'load')).toHaveLength(1)
+    expect(again.logs.filter((entry) => entry.tone === 'error')).toEqual([])
+    expect(session.logs.filter((entry) => entry.tone === 'error')).toEqual([])
   })
 })

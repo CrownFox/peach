@@ -7,8 +7,9 @@ import { componentSpan, readEnabled } from './runtime'
 import { findAssetByLocation } from './refs'
 import { boxIntersects, clipInset, sceneById, sceneNodeId, viewerCamera, viewerScene } from './sceneCamera'
 import { imageForTileset, mapSize, pruneCells, tileDraws, tilemapCellSize, tilemapDraws, tileSheet, tilesetFor, type TileStamp } from './tiles'
+import { canvasList, type AddedMap } from './spawned'
 import { orderZChildren } from './zField'
-import type { Asset, ButtonAsset, ButtonSlices, CanvasAsset, ImageAsset, LabelAlignX, LabelAlignY, MenuComponent, PanelAsset, SliceFill } from './types'
+import type { Asset, ButtonAsset, ButtonSlices, CanvasAsset, ImageAsset, LabelAlignX, LabelAlignY, MenuComponent, PageInputStyle, PanelAsset, SliceFill } from './types'
 
 export type SceneText = {
   value: string
@@ -59,6 +60,7 @@ export type SceneNode = {
   flipX: boolean
   flipY: boolean
   colliderShape: 'square' | 'circle' | null
+  inputStyle: PageInputStyle | null
 }
 
 export function clampSlices(slices: ButtonSlices, width: number, height: number): ButtonSlices {
@@ -230,13 +232,14 @@ export function buildScene(
     pages?: Record<string, PageDisplay>
     displayScale?: number
     showColliders?: boolean
+    added?: AddedMap
   }
 ): SceneNode[] {
   const byId = new Map<string, Asset>()
   for (const asset of assets) byId.set(asset.id, asset)
   const nodes: SceneNode[] = []
   const root = { x: 0, y: 0, width: canvas.width, height: canvas.height }
-  expand(canvas.components, canvas.width, canvas.height, root, '', [], true, true, '#ffffff', canvas.width, canvas.height, byId, options, nodes, null, null, canvas.type === 'scene', false, false)
+  expand(canvas.components, canvas.width, canvas.height, root, '', [], true, true, '#ffffff', canvas.width, canvas.height, byId, options, nodes, null, null, canvas.type === 'scene', false, false, true)
   return nodes
 }
 
@@ -259,11 +262,12 @@ function expand(
   camera: { viewX: number; viewY: number; menuPerScene: number; view: Box } | null,
   blockViewers: boolean,
   flipX: boolean,
-  flipY: boolean
+  flipY: boolean,
+  includeAdded: boolean
 ): void {
   const scaleX = canvasWidth > 0 ? content.width / canvasWidth : 0
   const scaleY = canvasHeight > 0 ? content.height / canvasHeight : 0
-  for (const component of components) {
+  for (const component of canvasList(components, options?.added, parent, includeAdded)) {
     if (component.type === 'zField') {
       const fieldId = instanceId(parent, component.id)
       const fieldPlaced = options?.overrides?.[fieldId]
@@ -288,7 +292,8 @@ function expand(
         camera,
         blockViewers,
         flipX,
-        flipY
+        flipY,
+        false
       )
       continue
     }
@@ -356,7 +361,8 @@ function expand(
         { viewX: view.viewX, viewY: view.viewY, menuPerScene: view.menuPerScene, view: slot },
         true,
         drawFlipX,
-        drawFlipY
+        drawFlipY,
+        true
       )
       continue
     }
@@ -391,7 +397,8 @@ function expand(
         null,
         blockViewers,
         drawFlipX,
-        drawFlipY
+        drawFlipY,
+        true
       )
       continue
     }
@@ -473,6 +480,7 @@ type SceneOptions = {
   displayScale?: number
   presentId?: (id: string) => string
   showColliders?: boolean
+  added?: AddedMap
 }
 
 function componentNode(
@@ -528,6 +536,7 @@ function componentNode(
     node.text = styledText('', component, 'left', 'center')
     node.page = options?.pages?.[frame.id] ?? previewPage(component, assets)
     node.scrollable = override?.scrollable ?? component.scrollable
+    node.inputStyle = component.inputStyle
     return node
   }
   if (component.type === 'label') {
@@ -600,7 +609,8 @@ function emptyNode(frame: { id: string; name: string; x: number; y: number; widt
     sheet: null,
     flipX: false,
     flipY: false,
-    colliderShape: null
+    colliderShape: null,
+    inputStyle: null
   }
 }
 

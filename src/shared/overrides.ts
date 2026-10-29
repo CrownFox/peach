@@ -1,4 +1,5 @@
 import { ownsZ, resolvePiece } from './composites'
+import type { AddedMap } from './spawned'
 import { componentColor } from './color'
 import { readShared, writeShared } from './runtime'
 import { assetLocation } from './paths'
@@ -158,9 +159,10 @@ export function writeComponentProperty(
   overrides: SceneOverrides,
   key: string,
   value: ScriptValue,
-  assets: Iterable<Asset>
+  assets: Iterable<Asset>,
+  added?: AddedMap
 ): void {
-  const found = resolvePiece(menu, assets, componentId)
+  const found = resolvePiece(menu, assets, componentId, added)
   if (!found) throw new Error('That component is no longer on this menu.')
   const component = found.component
   const current: ComponentOverride = { ...(overrides[componentId] ?? {}) }
@@ -182,7 +184,7 @@ export function writeComponentProperty(
     return
   }
   if (key === 'z') {
-    if (!ownsZ(menu, assets, componentId)) throw new Error('z is only available on a component inside a Z field.')
+    if (!ownsZ(menu, assets, componentId, added)) throw new Error('z is only available on a component inside a Z field.')
     if (value === null) {
       delete current.z
       overrides[componentId] = current

@@ -31,6 +31,14 @@ export const pageLoadScript = `function onLoad(parent)
 end
 `
 
+export const LEGACY_PAGE_IMAGE_EM = 1.4
+export const NEW_PAGE_IMAGE_EM = 8
+
+export function pageImageEm(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return LEGACY_PAGE_IMAGE_EM
+  return Math.min(40, value)
+}
+
 export type LoadedBook = {
   location: string
   fields: PageField[]
@@ -39,8 +47,8 @@ export type LoadedBook = {
 
 export type DisplayRun =
   | { type: 'text'; text: string; marks: PageMarks }
-  | { type: 'image'; imagePath: string | null }
-  | { type: 'input'; key: string; kind: 'text' | 'dropdown'; value: string; placeholder: string; options: string[] }
+  | { type: 'image'; imagePath: string | null; height: number }
+  | { type: 'input'; key: string; kind: 'text' | 'dropdown'; value: string; placeholder: string; options: string[]; style: string; styleId: string }
   | { type: 'note'; tone: 'evaluate'; label: string }
 
 export type DisplayParagraph = { type: 'paragraph'; align: PageAlign; runs: DisplayRun[] }
@@ -359,10 +367,10 @@ function previewParagraph(paragraph: PageParagraph, images: Iterable<ImageAsset>
 
 function previewRun(run: PageRun, images: Iterable<ImageAsset>): DisplayRun[] {
   if (run.type === 'text') return run.text ? [{ type: 'text', text: run.text, marks: run.marks }] : []
-  if (run.type === 'image') return [{ type: 'image', imagePath: imageFile(images, run.imageId) }]
+  if (run.type === 'image') return [{ type: 'image', imagePath: imageFile(images, run.imageId), height: pageImageEm(run.height) }]
   if (run.type === 'evaluate') return [{ type: 'note', tone: 'evaluate', label: 'Evaluate' }]
-  if (run.type === 'textInput') return [{ type: 'input', key: run.key, kind: 'text', value: '', placeholder: run.placeholder, options: [] }]
-  return [{ type: 'input', key: run.key, kind: 'dropdown', value: run.options[0] ?? '', placeholder: '', options: [...run.options] }]
+  if (run.type === 'textInput') return [{ type: 'input', key: run.key, kind: 'text', value: '', placeholder: run.placeholder, options: [], style: run.style, styleId: run.id }]
+  return [{ type: 'input', key: run.key, kind: 'dropdown', value: run.options[0] ?? '', placeholder: '', options: [...run.options], style: run.style, styleId: run.id }]
 }
 
 function playParagraph(
@@ -380,12 +388,12 @@ function playParagraph(
 
 function playRun(run: PageRun, images: Iterable<ImageAsset>, inputs: Record<string, string>, values: ReadonlyMap<string, string>): DisplayRun[] {
   if (run.type === 'text') return run.text ? [{ type: 'text', text: run.text, marks: run.marks }] : []
-  if (run.type === 'image') return [{ type: 'image', imagePath: imageFile(images, run.imageId) }]
+  if (run.type === 'image') return [{ type: 'image', imagePath: imageFile(images, run.imageId), height: pageImageEm(run.height) }]
   if (run.type === 'evaluate') return [{ type: 'text', text: values.get(run.id) ?? '', marks: plainMarks() }]
   if (run.type === 'textInput') {
-    return [{ type: 'input', key: run.key, kind: 'text', value: inputs[run.key] ?? '', placeholder: run.placeholder, options: [] }]
+    return [{ type: 'input', key: run.key, kind: 'text', value: inputs[run.key] ?? '', placeholder: run.placeholder, options: [], style: run.style, styleId: run.id }]
   }
-  return [{ type: 'input', key: run.key, kind: 'dropdown', value: inputs[run.key] ?? run.options[0] ?? '', placeholder: '', options: [...run.options] }]
+  return [{ type: 'input', key: run.key, kind: 'dropdown', value: inputs[run.key] ?? run.options[0] ?? '', placeholder: '', options: [...run.options], style: run.style, styleId: run.id }]
 }
 
 function imageFile(images: Iterable<ImageAsset>, id: string | null): string | null {

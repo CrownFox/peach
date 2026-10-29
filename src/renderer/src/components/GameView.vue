@@ -22,7 +22,7 @@ const nodes = computed(() => {
   if (!menu.value) return []
   const fitted = fitFrame(box.value.width, box.value.height, menu.value.width, menu.value.height)
   const displayScale = menu.value.width > 0 ? fitted.width / menu.value.width : 1
-  return buildScene(menu.value, project.assets, { pressedId: play.pressedId, overrides: play.overrides, pages: play.pages, displayScale })
+  return buildScene(menu.value, project.assets, { pressedId: play.pressedId, overrides: play.overrides, pages: play.pages, displayScale, added: play.added })
 })
 const modalViews = computed(() =>
   play.modals.flatMap((modal) => {
@@ -32,7 +32,7 @@ const modalViews = computed(() =>
     const displayScale = asset.width > 0 ? fitted.width / asset.width : 1
     return [{
       style: { width: `${fitted.width}px`, height: `${fitted.height}px` },
-      nodes: buildScene(asset, project.assets, { pressedId: play.pressedId, overrides: modal.overrides, pages: play.pages, displayScale })
+      nodes: buildScene(asset, project.assets, { pressedId: play.pressedId, overrides: modal.overrides, pages: play.pages, displayScale, added: modal.added })
     }]
   })
 )

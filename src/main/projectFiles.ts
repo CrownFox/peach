@@ -14,7 +14,7 @@ import { assetFileName, joinPath, parentPath, sanitizeFileStem, stemOfAssetFile,
 import { planTreeMove, remapMovedPaths } from '@shared/tree'
 import type { Asset, MutationResult, ProjectSnapshot } from '@shared/types'
 import { FORMAT_VERSION } from '@shared/types'
-import { defaultWorkspace, GAME_PROPERTIES_WINDOW, parseWorkspace } from '@shared/workspace'
+import { defaultWorkspace, GAME_PROPERTIES_WINDOW, INPUT_STYLE_WINDOW, parseWorkspace } from '@shared/workspace'
 
 const SKIP_DIRS = new Set(['node_modules', 'out', 'dist', '.git'])
 
@@ -69,7 +69,7 @@ export async function readProject(projectDir: string): Promise<ProjectSnapshot> 
   const known = new Set(assets.map((asset) => asset.id))
   workspace = {
     ...workspace,
-    windows: workspace.windows.filter((window) => window.assetId === GAME_PROPERTIES_WINDOW || known.has(window.assetId)),
+    windows: workspace.windows.filter((window) => window.assetId === GAME_PROPERTIES_WINDOW || window.assetId === INPUT_STYLE_WINDOW || known.has(window.assetId)),
     openMenuIds: workspace.openMenuIds.filter((id) => known.has(id)),
     openCollectionIds: workspace.openCollectionIds.filter((id) => known.has(id)),
     openBookIds: [...new Set([...workspace.openBookIds, ...workspace.openPageTabs.filter((tab) => pageTabAlive(tab, assets)).map((tab) => tab.slice(0, tab.indexOf('/')))])].filter(

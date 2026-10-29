@@ -1,4 +1,5 @@
 import type { ComponentOverride } from './overrides'
+import type { MenuComponent } from './types'
 
 export type SaveKind = 'saves' | 'customSaves'
 
@@ -15,6 +16,35 @@ export type SavedValue =
 
 export type SavedOverride = Omit<ComponentOverride, 'pageBook'> & { pageBookPath?: string }
 
+export type SavedUpvalue = {
+  name: string
+  skip: boolean
+  value: SavedValue | null
+}
+
+export type SavedScriptEnv = {
+  values: SavedValue
+  upvalues: Record<string, SavedUpvalue[]>
+}
+
+export type SavedPiece = {
+  parent: string
+  field?: string
+  component: MenuComponent
+}
+
+export type SavedScene = {
+  scene: string
+  stamp: string
+  failed: boolean
+  overrides: Record<string, SavedOverride>
+  env: SavedScriptEnv
+  components: Record<string, SavedScriptEnv>
+  composites: Record<string, SavedScriptEnv>
+  compositeFailed: string[]
+  added?: SavedPiece[]
+}
+
 export type SavedVisit = {
   menu: string
   overrides: Record<string, SavedOverride>
@@ -25,6 +55,7 @@ export type AutoSlot = {
   time: string
   visits: SavedVisit[]
   state: SavedValue
+  scenes?: SavedScene[]
 }
 
 export type CustomSlot = {

@@ -1,4 +1,5 @@
 import { fittedContent, instanceId, normalizeBox, shiftOrigin, type Box } from './composites'
+import { canvasList, type AddedMap } from './spawned'
 import { componentSpan, readEnabled } from './runtime'
 import { fitFrame } from './scene'
 import { viewerCamera, viewerScene } from './sceneCamera'
@@ -92,7 +93,8 @@ export function surveyPointer(
   assets: Iterable<Asset>,
   overrides: SceneOverrides,
   point: Point,
-  displayScale = 1
+  displayScale = 1,
+  added?: AddedMap
 ): PointerSurvey {
   const byId = new Map<string, Asset>()
   for (const asset of assets) byId.set(asset.id, asset)
@@ -107,9 +109,10 @@ export function surveyPointer(
     cursor: Point,
     ancestors: MouseTarget[],
     stack: string[],
-    interactive: boolean
+    interactive: boolean,
+    includeAdded: boolean
   ): void => {
-    for (const component of components) {
+    for (const component of canvasList(components, added, parent, includeAdded)) {
       const id = instanceId(parent, component.id)
       const placed = overrides[id]
       const span = componentSpan(component, placed)
@@ -117,7 +120,7 @@ export function surveyPointer(
       const enabled = readEnabled(component, placed)
       const live = interactive && shown && enabled
       if (component.type === 'zField') {
-        visit(orderZChildren(component.children, parent, overrides), parent, cursor, ancestors, stack, live)
+        visit(orderZChildren(component.children, parent, overrides), parent, cursor, ancestors, stack, live, false)
         continue
       }
       if (component.type === 'composite') {
@@ -129,7 +132,7 @@ export function surveyPointer(
         const next = [...ancestors, target]
         const visual = shiftOrigin(span, asset.originX, asset.originY, asset.width, asset.height)
         if (live && containsPoint(visual, cursor)) region = next
-        visit(asset.components, id, local, next, [...stack, asset.id], live)
+        visit(asset.components, id, local, next, [...stack, asset.id], live, true)
         continue
       }
       if (component.type === 'sceneViewer') {
@@ -149,7 +152,7 @@ export function surveyPointer(
             const target: MouseTarget = { kind: 'scene', id: scene.id, name: scene.name }
             region = [...ancestors, target]
             const marked = hit.component
-            visit(scene.components, `scene:${scene.id}`, local, [...ancestors, target], stack, live)
+            visit(scene.components, `scene:${scene.id}`, local, [...ancestors, target], stack, live, true)
             if (hit.component === marked) hit.chain = [...ancestors, target]
           }
         }
@@ -163,7 +166,7 @@ export function surveyPointer(
     }
   }
 
-  visit(menu.components, '', point, [], [], true)
+  visit(menu.components, '', point, [], [], true, true)
   const scenePoint = new Map<string, Point>()
   for (const [id, picked] of scenePick) scenePoint.set(id, picked.point)
   const targets: MouseTarget[] = []

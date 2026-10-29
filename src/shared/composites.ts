@@ -1,6 +1,7 @@
 import { readEnabled } from './runtime'
 import { sceneById } from './sceneCamera'
 import type { Asset, CanvasAsset, CompositeAsset, MenuAsset, MenuComponent, ZFieldComponent } from './types'
+import { canvasList, type AddedMap } from './spawned'
 import { directPieces, findInList } from './zField'
 
 export type Box = { x: number; y: number; width: number; height: number }
@@ -84,53 +85,64 @@ export function storedFromVisual(component: MenuComponent, visual: Box, assets: 
   }
 }
 
-export function resolvePiece(menu: MenuAsset, assets: Iterable<Asset>, id: string): Piece | null {
+export function resolvePiece(menu: MenuAsset, assets: Iterable<Asset>, id: string, added?: AddedMap): Piece | null {
   const shared = /^scene:([^/]+)\/(.+)$/.exec(id)
   if (shared?.[1] && shared[2]) {
     const scene = sceneById(assets, shared[1])
     if (!scene) return null
-    return walkPiece(scene.components, shared[2], id, assets)
+    return walkPiece(scene.components, shared[2], id, assets, added, `scene:${shared[1]}`)
   }
-  return walkPiece(menu.components, id, id, assets)
+  return walkPiece(menu.components, id, id, assets, added, '')
 }
 
-function walkPiece(components: MenuComponent[], id: string, instance: string, assets: Iterable<Asset>): Piece | null {
+function walkPiece(
+  components: readonly MenuComponent[],
+  id: string,
+  instance: string,
+  assets: Iterable<Asset>,
+  added: AddedMap | undefined,
+  parent: string
+): Piece | null {
   const parts = id.split('/').filter(Boolean)
   if (parts.length === 0) return null
   let current = components
+  let parentKey = parent
   let component: MenuComponent | undefined
   for (let index = 0; index < parts.length; index += 1) {
-    const found = findInList(current, parts[index] ?? '')
+    const found = findInList(canvasList(current, added, parentKey, true), parts[index] ?? '')
     component = found?.component
     if (!component) return null
     if (index === parts.length - 1) break
     if (component.type !== 'composite') return null
     const asset = compositeById(assets, component.compositeId)
     if (!asset) return null
+    parentKey = instanceId(parentKey, component.id)
     current = asset.components
   }
   return component ? { instanceId: instance, component } : null
 }
 
-export function ownsZ(menu: MenuAsset, assets: Iterable<Asset>, id: string): boolean {
+export function ownsZ(menu: MenuAsset, assets: Iterable<Asset>, id: string, added?: AddedMap): boolean {
   const shared = /^scene:([^/]+)\/(.+)$/.exec(id)
   if (shared?.[1] && shared[2]) {
     const scene = sceneById(assets, shared[1])
-    return scene ? zChild(scene.components, shared[2], assets) : false
+    return scene ? zChild(scene.components, shared[2], assets, added, `scene:${shared[1]}`) : false
   }
-  return zChild(menu.components, id, assets)
+  return zChild(menu.components, id, assets, added, '')
 }
 
-function zChild(components: readonly MenuComponent[], id: string, assets: Iterable<Asset>): boolean {
+function zChild(components: readonly MenuComponent[], id: string, assets: Iterable<Asset>, added: AddedMap | undefined, parent: string): boolean {
   const parts = id.split('/').filter(Boolean)
   let current = components
+  let parentKey = parent
   for (let index = 0; index < parts.length; index += 1) {
-    const found = findInList(current, parts[index] ?? '')
+    const found = findInList(canvasList(current, added, parentKey, true), parts[index] ?? '')
     if (!found) return false
     if (index === parts.length - 1) return found.field !== null
     if (found.component.type !== 'composite') return false
     const asset = compositeById(assets, found.component.compositeId)
     if (!asset) return false
+    parentKey = instanceId(parentKey, found.component.id)
     current = asset.components
   }
   return false
@@ -146,12 +158,14 @@ export function instanceVisible(
   menu: MenuAsset,
   assets: Iterable<Asset>,
   id: string,
-  overrides: Record<string, { visible?: boolean } | undefined>
+  overrides: Record<string, { visible?: boolean } | undefined>,
+  added?: AddedMap
 ): boolean {
   const parts = id.split('/').filter(Boolean)
-  let components = menu.components
+  let components: readonly MenuComponent[] = menu.components
+  let parentKey = ''
   for (let index = 0; index < parts.length; index += 1) {
-    const found = findInList(components, parts[index] ?? '')
+    const found = findInList(canvasList(components, added, parentKey, true), parts[index] ?? '')
     if (!found) return false
     if (found.field && !layerShown(found.field, parts.slice(0, index), overrides)) return false
     const key = parts.slice(0, index + 1).join('/')
@@ -160,6 +174,7 @@ export function instanceVisible(
       if (found.component.type !== 'composite') return false
       const asset = compositeById(assets, found.component.compositeId)
       if (!asset) return false
+      parentKey = key
       components = asset.components
     }
   }
@@ -170,13 +185,15 @@ export function instanceEnabled(
   menu: MenuAsset,
   assets: Iterable<Asset>,
   id: string,
-  overrides: Record<string, { enabled?: boolean } | undefined>
+  overrides: Record<string, { enabled?: boolean } | undefined>,
+  added?: AddedMap
 ): boolean {
   const parts = id.split('/').filter(Boolean)
-  let components = menu.components
+  let components: readonly MenuComponent[] = menu.components
+  let parentKey = ''
   let enabled = true
   for (let index = 0; index < parts.length; index += 1) {
-    const found = findInList(components, parts[index] ?? '')
+    const found = findInList(canvasList(components, added, parentKey, true), parts[index] ?? '')
     const component = found?.component
     if (!component) return false
     if (found.field && !readEnabled(found.field, overrides[[...parts.slice(0, index), found.field.id].join('/')])) return false
@@ -188,6 +205,7 @@ export function instanceEnabled(
       if (component.type !== 'composite') return false
       const asset = compositeById(assets, component.compositeId)
       if (!asset) return false
+      parentKey = key
       components = asset.components
     }
   }
@@ -199,14 +217,16 @@ export function scenePieceAllows(
   sceneId: string,
   localId: string,
   overrides: Record<string, { visible?: boolean; enabled?: boolean } | undefined>,
-  mode: 'visible' | 'enabled'
+  mode: 'visible' | 'enabled',
+  added?: AddedMap
 ): boolean {
   const scene = sceneById(assets, sceneId)
   if (!scene) return false
   const parts = localId.split('/').filter(Boolean)
-  let components = scene.components
+  let components: readonly MenuComponent[] = scene.components
+  let parentKey = `scene:${sceneId}`
   for (let index = 0; index < parts.length; index += 1) {
-    const found = findInList(components, parts[index] ?? '')
+    const found = findInList(canvasList(components, added, parentKey, true), parts[index] ?? '')
     const component = found?.component
     if (!component) return false
     if (mode === 'visible' && found.field && !layerShown(found.field, parts.slice(0, index), overrides, sceneId)) return false
@@ -221,15 +241,16 @@ export function scenePieceAllows(
       if (component.type !== 'composite') return false
       const asset = compositeById(assets, component.compositeId)
       if (!asset) return false
+      parentKey = key
       components = asset.components
     }
   }
   return parts.length > 0
 }
 
-export function visitPieces(canvas: CanvasAsset, assets: Iterable<Asset>, visit: (piece: Piece) => void): void {
-  const walk = (components: MenuComponent[], parent: string, stack: string[]): void => {
-    for (const component of directPieces(components)) {
+export function visitPieces(canvas: CanvasAsset, assets: Iterable<Asset>, visit: (piece: Piece) => void, added?: AddedMap): void {
+  const walk = (components: readonly MenuComponent[], parent: string, stack: string[]): void => {
+    for (const component of directPieces(canvasList(components, added, parent, true))) {
       const id = instanceId(parent, component.id)
       visit({ instanceId: id, component })
       if (component.type !== 'composite' || !component.compositeId || stack.includes(component.compositeId)) continue

@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { BUILTIN_FONTS } from '@shared/fonts'
 import { createId } from '@shared/ids'
 import type { ComponentOverride } from '@shared/overrides'
 import { applyIntrinsicSize } from '@shared/intrinsicSize'
-import type { LabelAlignX, LabelAlignY, MenuComponent } from '@shared/types'
+import type { LabelAlignX, LabelAlignY, MenuComponent, PageInputStyle } from '@shared/types'
 import { usePlayStore } from '@/stores/play'
 import { useProjectStore } from '@/stores/project'
 import AssetSelect from './AssetSelect.vue'
+import InputStyleEditor from './InputStyleEditor.vue'
 
 const labelSpots: { alignX: LabelAlignX; alignY: LabelAlignY; name: string }[] = [
   { alignX: 'left', alignY: 'top', name: 'Top left' },
@@ -22,6 +23,7 @@ const labelSpots: { alignX: LabelAlignX; alignY: LabelAlignY; name: string }[] =
 ]
 
 const props = defineProps<{ menuId: string; component: MenuComponent }>()
+const styleOpen = ref(false)
 const project = useProjectStore()
 const play = usePlayStore()
 const pagePaths = computed(() => {
@@ -33,6 +35,12 @@ const pagePaths = computed(() => {
 
 function patch(recipe: (component: MenuComponent) => void): void {
   project.patchComponent(props.menuId, props.component.id, recipe)
+}
+
+function setInputStyle(style: PageInputStyle): void {
+  patch((component) => {
+    if (component.type === 'pageViewer') component.inputStyle = style
+  })
 }
 
 function forget(key: keyof ComponentOverride): void {
@@ -249,6 +257,22 @@ function toggleSelected(id: string, event: Event): void {
     @update:model-value="setPanel"
   />
   <template v-if="component.type === 'pageViewer'">
+    <div class="style-fold">
+      <button class="btn quiet" type="button" @click="styleOpen = !styleOpen">{{ styleOpen ? 'Hide input style' : 'Input style' }}</button>
+      <InputStyleEditor
+        v-if="styleOpen"
+        compact
+        show-kind
+        layer="viewer"
+        :text="component.inputStyle.text"
+        :dropdown="component.inputStyle.dropdown"
+        :under="project.meta?.inputStyle"
+        :font-family="component.fontFamily"
+        :color="component.color"
+        hint="This adds to the game style for inputs in this viewer. &:disabled runs when the viewer is disabled."
+        @change="setInputStyle"
+      />
+    </div>
     <AssetSelect label="Book" type="book" clearable :model-value="component.bookId" @update:model-value="setBook" />
     <label class="field">
       <span class="field-label">Page</span>

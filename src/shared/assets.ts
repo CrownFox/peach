@@ -1,9 +1,10 @@
-import { coercePageValue, emptyPage, pageFieldType, pageValue, plainMarks, valueScript, visibleScript } from './books'
+import { coercePageValue, emptyPage, pageFieldType, pageImageEm, pageValue, plainMarks, valueScript, visibleScript } from './books'
 import { coerceFieldValue } from './collections'
 import { componentColor } from './color'
 import { DEFAULT_FONT_FAMILY } from './fonts'
 import { isScriptHandle } from './handles'
 import { createId } from './ids'
+import { emptyInputStyle, readInputStyle } from './inputStyle'
 import {
   assetFileName,
   isInside,
@@ -356,7 +357,8 @@ function parseComponent(value: unknown): MenuComponent | null {
       panelId,
       progressive: value.progressive === true,
       rate: Math.max(1, num(value.rate, DEFAULT_TEXT_RATE)),
-      scrollable: value.scrollable !== false
+      scrollable: value.scrollable !== false,
+      inputStyle: readInputStyle(value.inputStyle)
     }
   }
   if (type === 'composite') {
@@ -510,12 +512,15 @@ function parseRun(value: unknown): PageRun | null {
   if (!isRecord(value)) return null
   if (value.type === 'text') return { type: 'text', text: str(value.text), marks: parseMarks(value.marks) }
   const id = str(value.id) || createId()
-  if (value.type === 'image') return { type: 'image', id, imageId: idOrNull(value.imageId) }
+  if (value.type === 'image') {
+    const height = typeof value.height === 'number' && value.height > 0 ? pageImageEm(value.height) : undefined
+    return { type: 'image', id, imageId: idOrNull(value.imageId), ...(height ? { height } : {}) }
+  }
   if (value.type === 'evaluate') return { type: 'evaluate', id, script: str(value.script, valueScript) }
-  if (value.type === 'textInput') return { type: 'textInput', id, key: str(value.key), placeholder: str(value.placeholder) }
+  if (value.type === 'textInput') return { type: 'textInput', id, key: str(value.key), placeholder: str(value.placeholder), style: str(value.style) }
   if (value.type === 'dropdown') {
     const options = Array.isArray(value.options) ? value.options.filter((item): item is string => typeof item === 'string' && item.length > 0) : []
-    return { type: 'dropdown', id, key: str(value.key), options }
+    return { type: 'dropdown', id, key: str(value.key), options, style: str(value.style) }
   }
   return null
 }
@@ -724,7 +729,7 @@ function parseCanvasAsset(
 
 export function parseMeta(value: unknown, fallbackName: string): ProjectMeta {
   if (!isRecord(value)) {
-    return { formatVersion: FORMAT_VERSION, name: fallbackName, author: '', icon: null, entryMenuId: null }
+    return { formatVersion: FORMAT_VERSION, name: fallbackName, author: '', icon: null, entryMenuId: null, inputStyle: emptyInputStyle() }
   }
   const name = str(value.name, fallbackName).trim() || fallbackName
   const icon = str(value.icon).trim()
@@ -733,7 +738,8 @@ export function parseMeta(value: unknown, fallbackName: string): ProjectMeta {
     name,
     author: str(value.author).trim(),
     icon: icon || null,
-    entryMenuId: idOrNull(value.entryMenuId)
+    entryMenuId: idOrNull(value.entryMenuId),
+    inputStyle: readInputStyle(value.inputStyle)
   }
 }
 
@@ -1026,7 +1032,8 @@ export function createPageViewerComponent(components: MenuComponent[]): PageView
     panelId: null,
     progressive: false,
     rate: DEFAULT_TEXT_RATE,
-    scrollable: true
+    scrollable: true,
+    inputStyle: emptyInputStyle()
   }
 }
 
